@@ -1,6 +1,7 @@
 package com.niko.asistan
 
 import android.Manifest
+import android.app.Activity
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -48,6 +49,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Sesli komut tetikleyici modunda açıldıysa doğrudan Google mikrofonunu başlat
+        if (intent?.getBooleanExtra("VOICE_TRIGGER", false) == true) {
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+            startVoiceDialog()
+            return
+        }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         }
@@ -74,14 +82,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "⚡ NİKO ASİSTAN v4.0"
+            text = "⚡ NİKO ASİSTAN v5.0"
             textSize = 24f
             setTextColor(Color.parseColor("#22D3EE"))
             gravity = Gravity.CENTER
         }
 
         val subtitle = TextView(this).apply {
-            text = "HYDROGEN MOTORU & MAKSİMUM SES"
+            text = "KESİNTİSİZ SES ALGILAMA & HEY NİKO MODU"
             textSize = 11f
             setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
@@ -129,7 +137,7 @@ class MainActivity : AppCompatActivity() {
         val spacer3 = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 40) }
 
         val btnStart = Button(this).apply {
-            text = "🚀 NİKO'YU BAŞLAT (TAM GÜÇ)"
+            text = "🚀 NİKO'YU BAŞLAT (SESSİZ AÇILIŞ)"
             textSize = 15f
             setTextColor(Color.WHITE)
             setPadding(50, 45, 50, 45)
@@ -147,7 +155,6 @@ class MainActivity : AppCompatActivity() {
                     prefs.edit().putString("GEMINI_KEY", apiInput.text.toString().trim()).apply()
                     stopService(Intent(this@MainActivity, OverlayService::class.java))
                     startService(Intent(this@MainActivity, OverlayService::class.java))
-                    Toast.makeText(this@MainActivity, "Niko Aktif Edildi!", Toast.LENGTH_SHORT).show()
                     finish()
                 }
             }
@@ -162,19 +169,58 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(btnStart)
         setContentView(rootLayout)
     }
+
+    private fun startVoiceDialog() {
+        try {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Niko Dinliyor...")
+            }
+            startActivityForResult(intent, 999)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Cihazda ses motoru bulunamadı.", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 999 && resultCode == Activity.RESULT_OK && data != null) {
+            val matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            if (!matches.isNullOrEmpty()) {
+                val svcIntent = Intent(this, OverlayService::class.java).apply {
+                    putExtra("VOICE_COMMAND", matches[0])
+                }
+                startService(svcIntent)
+            }
+        }
+        finish()
+    }
 }
 
 class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var windowManager: WindowManager
     private lateinit var overlayView: View
     private lateinit var statusText: TextView
+    private lateinit var wakeBtn: TextView
     private var speechRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private val client = OkHttpClient()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeModelName: String? = null
+    private var alwaysListening = false
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val cmd = intent?.getStringExtra("VOICE_COMMAND")
+        if (!cmd.isNullOrEmpty()) {
+            statusText.text = "🗣️ \"$cmd\""
+            processCommand(cmd, fromWakeWord = false)
+        }
+        return START_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -184,7 +230,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(40, 25, 40, 25)
+            setPadding(35, 25, 35, 25)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 60f
@@ -194,10 +240,38 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
 
         statusText = TextView(this).apply {
-            text = "🤖 Niko Hazır (Dokun & Konuş)"
+            text = "🤖 Niko Hazır (Konuşmak için dokun)"
             textSize = 14f
             setTextColor(Color.parseColor("#22D3EE"))
-            setPadding(10, 0, 30, 0)
+            setPadding(10, 0, 20, 0)
+            setOnClickListener {
+                // Garantili ses algılama penceresini aç
+                tts?.stop()
+                val dialogIntent = Intent(this@OverlayService, MainActivity::class.java).apply {
+                    putExtra("VOICE_TRIGGER", true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(dialogIntent)
+            }
+        }
+
+        // "Hey Niko" Sürekli Dinleme Aç/Kapat Tuşu
+        wakeBtn = TextView(this).apply {
+            text = " 👂 "
+            textSize = 16f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setOnClickListener {
+                alwaysListening = !alwaysListening
+                if (alwaysListening) {
+                    setTextColor(Color.parseColor("#4ADE80"))
+                    statusText.text = "👂 'Hey Niko' bekleniyor..."
+                    startWakeWordLoop()
+                } else {
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    speechRecognizer?.destroy()
+                    statusText.text = "🤖 Niko Hazır (Konuşmak için dokun)"
+                }
+            }
         }
 
         val closeBtn = TextView(this).apply {
@@ -205,16 +279,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             textSize = 16f
             setTextColor(Color.parseColor("#F87171"))
             setOnClickListener {
+                alwaysListening = false
                 stopSelf()
             }
         }
 
         bubble.addView(statusText)
+        bubble.addView(wakeBtn)
         bubble.addView(closeBtn)
-
-        bubble.setOnClickListener {
-            startListening()
-        }
 
         overlayView = bubble
 
@@ -241,22 +313,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("tr", "TR")
-            // Sesi medya kanalına yönlendir (Kısık ses çözümünün 1. parçası)
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             tts?.setAudioAttributes(audioAttrs)
-            speak("Niko tam güçte aktif efendim.")
+            // İstediğin gibi açılış konuşması tamamen kaldırıldı!
         }
     }
 
     private fun speak(text: String) {
-        // Mikrofonu tamamen kapat ki Android sesi kısmasın (Kısık ses çözümünün 2. parçası)
         speechRecognizer?.destroy()
         speechRecognizer = null
 
-        // Medya sesini otomatik %100'e çıkar
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.mode = AudioManager.MODE_NORMAL
         audioManager.isSpeakerphoneOn = true
@@ -266,51 +335,73 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val params = Bundle()
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "NikoTTS")
-    }
 
-    private fun startListening() {
-        mainHandler.post {
-            tts?.stop()
-            speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
-            }
-
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    statusText.text = "🎙️ Dinliyorum..."
-                    statusText.setTextColor(Color.parseColor("#4ADE80"))
-                }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {
-                    statusText.text = "⏳ Düşünüyorum..."
-                    statusText.setTextColor(Color.parseColor("#FACC15"))
-                }
-                override fun onError(error: Int) {
-                    statusText.text = "⚠️ Ses algılanamadı. Tekrar dokun."
-                    statusText.setTextColor(Color.parseColor("#F87171"))
-                }
-                override fun onResults(results: Bundle?) {
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    if (!matches.isNullOrEmpty()) {
-                        val command = matches[0]
-                        statusText.text = "🗣️ \"$command\""
-                        processCommand(command)
-                    }
-                }
-                override fun onPartialResults(partialResults: Bundle?) {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-
-            speechRecognizer?.startListening(intent)
+        // Konuşma bitince "Hey Niko" modu açıksa tekrar dinlemeye dön
+        if (alwaysListening) {
+            mainHandler.postDelayed({ startWakeWordLoop() }, 4000)
         }
     }
 
-    private fun processCommand(command: String) {
+    private fun startWakeWordLoop() {
+        if (!alwaysListening) return
+        mainHandler.post {
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
+                }
+
+                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onError(error: Int) {
+                        if (alwaysListening) {
+                            mainHandler.postDelayed({ startWakeWordLoop() }, 1200)
+                        }
+                    }
+                    override fun onResults(results: Bundle?) {
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        if (!matches.isNullOrEmpty()) {
+                            val spoken = matches[0]
+                            val lower = spoken.lowercase(Locale("tr", "TR"))
+                            if (lower.contains("niko") || lower.contains("nico")) {
+                                val cleanCmd = lower.replace("hey niko", "")
+                                    .replace("niko", "")
+                                    .replace("nico", "")
+                                    .trim()
+                                if (cleanCmd.isNotEmpty()) {
+                                    statusText.text = "🗣️ \"$cleanCmd\""
+                                    processCommand(cleanCmd, fromWakeWord = true)
+                                } else {
+                                    // Sadece "Hey Niko" dediyse garantili mikrofon penceresini aç
+                                    val dialogIntent = Intent(this@OverlayService, MainActivity::class.java).apply {
+                                        putExtra("VOICE_TRIGGER", true)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                    }
+                                    startActivity(dialogIntent)
+                                }
+                                return
+                            }
+                        }
+                        if (alwaysListening) {
+                            mainHandler.postDelayed({ startWakeWordLoop() }, 800)
+                        }
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                speechRecognizer?.startListening(intent)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun processCommand(command: String, fromWakeWord: Boolean) {
         val lower = command.lowercase(Locale("tr", "TR"))
 
         if (lower.contains("whatsapp") && lower.contains("aç")) {
@@ -324,12 +415,13 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         if (lower.contains("ayarlar") && lower.contains("aç")) {
             val intent = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
-            reply("Ayarları açıyorum efendim.")
+            reply("Ayarları açıyorum.")
             return
         }
         if (lower.contains("kapat kendini") || lower.contains("görüşürüz")) {
-            reply("Görüşmek üzere efendim.")
-            mainHandler.postDelayed({ stopSelf() }, 2500)
+            alwaysListening = false
+            reply("Görüşmek üzere.")
+            mainHandler.postDelayed({ stopSelf() }, 2000)
             return
         }
 
@@ -339,6 +431,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
+        statusText.text = "⏳ Düşünüyorum..."
+        statusText.setTextColor(Color.parseColor("#FACC15"))
         askGeminiSmart(command, apiKey.trim())
     }
 
@@ -347,7 +441,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(launchIntent)
-            reply("$appName açılıyor efendim.")
+            reply("$appName açılıyor.")
         } else {
             reply("$appName cihazda bulunamadı.")
         }
@@ -361,7 +455,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // 404 Hatasını Önleyen ve Hydrogen Modelini Otomatik Bulup Seçen Akıllı Sistem
     private fun askGeminiSmart(prompt: String, cleanKey: String) {
         if (activeModelName != null) {
             sendGenerateRequest(prompt, cleanKey, activeModelName!!)
@@ -377,7 +470,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                reply("Bağlantı hatası: ${e.localizedMessage}")
+                reply("Bağlantı hatası.")
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -385,20 +478,18 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 if (response.isSuccessful && body != null) {
                     try {
                         val models = JSONObject(body).getJSONArray("models")
-                        var selectedModel: String? = null
                         val available = mutableListOf<String>()
 
                         for (i in 0 until models.length()) {
                             val m = models.getJSONObject(i)
-                            val name = m.getString("name") // Örn: "models/gemini-..."
+                            val name = m.getString("name")
                             val methods = m.optJSONArray("supportedGenerationMethods")?.toString() ?: ""
                             if (methods.contains("generateContent")) {
                                 available.add(name)
                             }
                         }
 
-                        // Öncelik sırası: 1. Hydrogen / Gemini 4, 2. En yeni Gemini modelleri
-                        selectedModel = available.firstOrNull { it.contains("hydrogen", ignoreCase = true) }
+                        val selectedModel = available.firstOrNull { it.contains("hydrogen", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini-4", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini-3", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini-2.5", ignoreCase = true) }
@@ -410,7 +501,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             activeModelName = selectedModel
                             sendGenerateRequest(prompt, cleanKey, selectedModel)
                         } else {
-                            reply("Hesapta aktif model bulunamadı.")
+                            reply("Aktif model bulunamadı.")
                         }
                     } catch (e: Exception) {
                         reply("Model tarama hatası.")
@@ -472,6 +563,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        alwaysListening = false
         speechRecognizer?.destroy()
         tts?.shutdown()
         if (::overlayView.isInitialized) {
