@@ -1,0 +1,33 @@
+name: Niko APK Uretici
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Projeyi Cek
+        uses: actions/checkout@v4
+
+      - name: JDK 17 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Gradle Kurulumu
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: APK Derle
+        run: gradle assembleDebug
+
+      - name: APK Dosyasini Hazirla
+        uses: actions/upload-artifact@v4
+        with:
+          name: Niko-Asistan-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
