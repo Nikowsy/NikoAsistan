@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioAttributes
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -72,14 +74,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "⚡ NİKO ASİSTAN v3.0"
+            text = "⚡ NİKO ASİSTAN v4.0"
             textSize = 24f
             setTextColor(Color.parseColor("#22D3EE"))
             gravity = Gravity.CENTER
         }
 
         val subtitle = TextView(this).apply {
-            text = "JARVIS SİSTEM KONTROL MERKEZİ"
+            text = "HYDROGEN MOTORU & MAKSİMUM SES"
             textSize = 11f
             setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
@@ -120,14 +122,14 @@ class MainActivity : AppCompatActivity() {
             }
             setOnClickListener {
                 prefs.edit().putString("GEMINI_KEY", apiInput.text.toString().trim()).apply()
-                Toast.makeText(this@MainActivity, "✨ Beyin Anahtarı Kaydedildi!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "✨ Anahtar Kaydedildi!", Toast.LENGTH_SHORT).show()
             }
         }
 
         val spacer3 = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 40) }
 
         val btnStart = Button(this).apply {
-            text = "🚀 NİKO'YU BAŞLAT (AKILLI BALON)"
+            text = "🚀 NİKO'YU BAŞLAT (TAM GÜÇ)"
             textSize = 15f
             setTextColor(Color.WHITE)
             setPadding(50, 45, 50, 45)
@@ -170,6 +172,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private val client = OkHttpClient()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var activeModelName: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -238,16 +241,36 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("tr", "TR")
-            speak("Niko sistemleri aktif efendim.")
+            // Sesi medya kanalına yönlendir (Kısık ses çözümünün 1. parçası)
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            tts?.setAudioAttributes(audioAttrs)
+            speak("Niko tam güçte aktif efendim.")
         }
     }
 
     private fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NikoTTS")
+        // Mikrofonu tamamen kapat ki Android sesi kısmasın (Kısık ses çözümünün 2. parçası)
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+
+        // Medya sesini otomatik %100'e çıkar
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.mode = AudioManager.MODE_NORMAL
+        audioManager.isSpeakerphoneOn = true
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
+
+        val params = Bundle()
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "NikoTTS")
     }
 
     private fun startListening() {
         mainHandler.post {
+            tts?.stop()
             speechRecognizer?.destroy()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -268,7 +291,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                     statusText.setTextColor(Color.parseColor("#FACC15"))
                 }
                 override fun onError(error: Int) {
-                    statusText.text = "⚠️ Ses algılanamadı."
+                    statusText.text = "⚠️ Ses algılanamadı. Tekrar dokun."
                     statusText.setTextColor(Color.parseColor("#F87171"))
                 }
                 override fun onResults(results: Bundle?) {
@@ -306,7 +329,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
         if (lower.contains("kapat kendini") || lower.contains("görüşürüz")) {
             reply("Görüşmek üzere efendim.")
-            mainHandler.postDelayed({ stopSelf() }, 2000)
+            mainHandler.postDelayed({ stopSelf() }, 2500)
             return
         }
 
@@ -316,7 +339,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        askGemini(command, apiKey)
+        askGeminiSmart(command, apiKey.trim())
     }
 
     private fun openApp(packageName: String, appName: String) {
@@ -338,10 +361,69 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun askGemini(prompt: String, apiKey: String) {
-        val cleanKey = apiKey.trim()
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$cleanKey"
+    // 404 Hatasını Önleyen ve Hydrogen Modelini Otomatik Bulup Seçen Akıllı Sistem
+    private fun askGeminiSmart(prompt: String, cleanKey: String) {
+        if (activeModelName != null) {
+            sendGenerateRequest(prompt, cleanKey, activeModelName!!)
+            return
+        }
 
+        val listUrl = "https://generativelanguage.googleapis.com/v1beta/models?key=$cleanKey"
+        val req = Request.Builder()
+            .url(listUrl)
+            .addHeader("x-goog-api-key", cleanKey)
+            .get()
+            .build()
+
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                reply("Bağlantı hatası: ${e.localizedMessage}")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                if (response.isSuccessful && body != null) {
+                    try {
+                        val models = JSONObject(body).getJSONArray("models")
+                        var selectedModel: String? = null
+                        val available = mutableListOf<String>()
+
+                        for (i in 0 until models.length()) {
+                            val m = models.getJSONObject(i)
+                            val name = m.getString("name") // Örn: "models/gemini-..."
+                            val methods = m.optJSONArray("supportedGenerationMethods")?.toString() ?: ""
+                            if (methods.contains("generateContent")) {
+                                available.add(name)
+                            }
+                        }
+
+                        // Öncelik sırası: 1. Hydrogen / Gemini 4, 2. En yeni Gemini modelleri
+                        selectedModel = available.firstOrNull { it.contains("hydrogen", ignoreCase = true) }
+                            ?: available.firstOrNull { it.contains("gemini-4", ignoreCase = true) }
+                            ?: available.firstOrNull { it.contains("gemini-3", ignoreCase = true) }
+                            ?: available.firstOrNull { it.contains("gemini-2.5", ignoreCase = true) }
+                            ?: available.firstOrNull { it.contains("gemini-2.0", ignoreCase = true) }
+                            ?: available.firstOrNull { it.contains("gemini", ignoreCase = true) }
+                            ?: available.firstOrNull()
+
+                        if (selectedModel != null) {
+                            activeModelName = selectedModel
+                            sendGenerateRequest(prompt, cleanKey, selectedModel)
+                        } else {
+                            reply("Hesapta aktif model bulunamadı.")
+                        }
+                    } catch (e: Exception) {
+                        reply("Model tarama hatası.")
+                    }
+                } else {
+                    reply("Anahtar doğrulanamadı (Kod: ${response.code})")
+                }
+            }
+        })
+    }
+
+    private fun sendGenerateRequest(prompt: String, cleanKey: String, modelPath: String) {
+        val url = "https://generativelanguage.googleapis.com/v1beta/$modelPath:generateContent?key=$cleanKey"
         val systemInstruction = "Sen kullanıcının Android cihazında çalışan Jarvis benzeri sesli asistanı Niko'sun. Çok kısa, net, samimi ve doğrudan cevap ver (maksimum 2 cümle). Kullanıcı: $prompt"
 
         val jsonBody = JSONObject().apply {
@@ -360,7 +442,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                reply("İnternet bağlantı hatası: ${e.localizedMessage}")
+                reply("İnternet hatası.")
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -378,10 +460,10 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             .trim()
                         reply(answer)
                     } catch (e: Exception) {
-                        reply("Cevap çözülemedi.")
+                        reply("Cevap okunamadı.")
                     }
                 } else {
-                    // Hata olursa sebebini doğrudan ekranda gösterelim
+                    activeModelName = null
                     reply("Hata Kodu: ${response.code}")
                 }
             }
