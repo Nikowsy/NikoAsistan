@@ -1,10 +1,14 @@
 package com.niko.asistan
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -40,6 +44,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import okhttp3.Call
 import okhttp3.Callback
@@ -55,10 +60,10 @@ import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
 
-// Marvel JARVIS Canlı Sarı Hologram Çekirdeği
-class JarvisVisualizerView(context: Context) : View(context) {
+// N · I · K · O Canlı Sarı Hologram Çekirdeği
+class NikoVisualizerView(context: Context) : View(context) {
     var audioLevel = 0f
-    var stateText = "HAZIR"
+    var stateText = "NÖBETTE"
     var isSpeakingOrListening = false
     private var angle1 = 0f
     private var angle2 = 0f
@@ -103,14 +108,13 @@ class JarvisVisualizerView(context: Context) : View(context) {
         val cy = height / 2f
         val maxR = (width.coerceAtMost(height) / 2f) * 0.85f
 
-        val speed = if (isSpeakingOrListening) 2.6f else 0.7f
+        val speed = if (isSpeakingOrListening) 2.8f else 0.7f
         angle1 = (angle1 + 0.9f * speed) % 360f
         angle2 = (angle2 - 1.3f * speed) % 360f
         angle3 = (angle3 + 0.5f * speed) % 360f
 
-        val pulse = if (isSpeakingOrListening) (audioLevel * 14f).coerceIn(5f, 95f) else 8f
+        val pulse = if (isSpeakingOrListening) (audioLevel * 15f).coerceIn(6f, 100f) else 8f
 
-        // Dış Kadran Çizgileri
         val outerR = maxR * 0.95f
         for (i in 0 until 60) {
             val rad = Math.toRadians((i * 6).toDouble())
@@ -122,7 +126,6 @@ class JarvisVisualizerView(context: Context) : View(context) {
             canvas.drawLine(x1, y1, x2, y2, tickPaint)
         }
 
-        // Dönen Sarı Jarvis Halkaları
         canvas.save()
         canvas.rotate(angle1, cx, cy)
         val r1 = maxR * 0.76f + pulse * 0.2f
@@ -144,7 +147,6 @@ class JarvisVisualizerView(context: Context) : View(context) {
         canvas.drawArc(rect, 0f, 360f, false, ringPaint3)
         canvas.restore()
 
-        // Parlayan Merkez Enerji Çekirdeği
         val coreR = (maxR * 0.30f + pulse * 0.6f).coerceAtLeast(25f)
         corePaint.shader = RadialGradient(
             cx, cy, coreR * 1.4f,
@@ -159,16 +161,14 @@ class JarvisVisualizerView(context: Context) : View(context) {
         )
         canvas.drawCircle(cx, cy, coreR * 1.4f, corePaint)
 
-        // Durum Yazısı (DÜŞÜNÜYOR / DİNLİYOR)
         canvas.drawText(stateText, cx, cy + maxR * 0.68f, textPaint)
-
         postInvalidateOnAnimation()
     }
 }
 
 class MainActivity : AppCompatActivity() {
     companion object {
-        var visualizer: JarvisVisualizerView? = null
+        var visualizer: NikoVisualizerView? = null
         var subtitleView: TextView? = null
     }
 
@@ -191,41 +191,35 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 70, 40, 50)
         }
 
-        // Üst J . A . R . V . I . S Başlığı
+        // Üst Başlık: N · I · K · O
         val topHeader = TextView(this).apply {
-            text = "J  ·  A  ·  R  ·  V  ·  I  ·  S"
-            textSize = 20f
+            text = "N  ·  I  ·  K  ·  O"
+            textSize = 24f
             setTextColor(Color.parseColor("#F59E0B"))
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(0, 10, 0, 20)
         }
 
-        // Orta Canlı Sarı Hologram
-        val jarvisView = JarvisVisualizerView(this).apply {
+        val nikoView = NikoVisualizerView(this).apply {
             layoutParams = LinearLayout.LayoutParams(680, 680).apply {
                 gravity = Gravity.CENTER
             }
             setOnClickListener {
-                val svc = Intent(this@MainActivity, OverlayService::class.java).apply {
-                    putExtra("ACTION", "TRIGGER_LISTEN")
-                }
-                startService(svc)
+                startNikoService("WAKE_NOW")
             }
         }
-        visualizer = jarvisView
+        visualizer = nikoView
 
-        // Alt Yazı Alanı
         val subText = TextView(this).apply {
-            text = "\"Hey Niko\" diyebilir veya çekirdeğe dokunabilirsin"
-            textSize = 16f
+            text = "Uygulamayı kapatsan bile \"Hey Niko\" dediğinde sağ alttan açılır"
+            textSize = 15f
             setTextColor(Color.parseColor("#FEF08A"))
             gravity = Gravity.CENTER
             setPadding(40, 20, 40, 30)
         }
         subtitleView = subText
 
-        // Alt Kontrol ve Anahtar Kutusu (Şeffaf Sarı Çerçeveli)
         val bottomPanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -249,8 +243,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnActivate = Button(this).apply {
-            text = "BAŞLAT"
-            textSize = 12f
+            text = "KAYDET & NÖBETİ BAŞLAT"
+            textSize = 11f
             setTextColor(Color.BLACK)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
@@ -263,9 +257,8 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "Lütfen Ekran Üstü İznini Açın", Toast.LENGTH_LONG).show()
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 } else {
-                    stopService(Intent(this@MainActivity, OverlayService::class.java))
-                    startService(Intent(this@MainActivity, OverlayService::class.java))
-                    Toast.makeText(this@MainActivity, "Jarvis Şeffaf Bar Aktif!", Toast.LENGTH_SHORT).show()
+                    startNikoService("START_BG")
+                    Toast.makeText(this@MainActivity, "Niko Arka Planda Aktif! 'Hey Niko' diyebilirsin.", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -274,16 +267,26 @@ class MainActivity : AppCompatActivity() {
         bottomPanel.addView(btnActivate)
 
         mainCol.addView(topHeader)
-        mainCol.addView(jarvisView, LinearLayout.LayoutParams(680, 680))
+        mainCol.addView(nikoView, LinearLayout.LayoutParams(680, 680))
         mainCol.addView(subText)
         mainCol.addView(bottomPanel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         root.addView(mainCol)
         setContentView(root)
 
-        // İzin varsa servisi otomatik başlat
         if (Settings.canDrawOverlays(this) && !prefs.getString("GEMINI_KEY", "").isNullOrEmpty()) {
-            startService(Intent(this, OverlayService::class.java))
+            startNikoService("START_BG")
+        }
+    }
+
+    private fun startNikoService(action: String) {
+        val svc = Intent(this, OverlayService::class.java).apply {
+            putExtra("ACTION", action)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(svc)
+        } else {
+            startService(svc)
         }
     }
 
@@ -300,22 +303,54 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var pillText: TextView
     private lateinit var waveIndicator: TextView
     private var speechRecognizer: SpeechRecognizer? = null
+    private lateinit var recognizerIntent: Intent
     private var tts: TextToSpeech? = null
     private val client = OkHttpClient()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeModelName: String? = null
 
-    private var isDirectCommandMode = false
+    private var isAwakeForCommand = false
     private var isSpeaking = false
     private var isProcessing = false
+    private var isListeningNow = false
+
+    private val hideRunnable = Runnable {
+        if (!isSpeaking && !isProcessing) {
+            isAwakeForCommand = false
+            overlayView.visibility = View.GONE
+            MainActivity.visualizer?.stateText = "NÖBETTE"
+            MainActivity.visualizer?.isSpeakingOrListening = false
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.getStringExtra("ACTION") == "TRIGGER_LISTEN") {
-            triggerDirectListen()
+        startAsForeground()
+        if (intent?.getStringExtra("ACTION") == "WAKE_NOW") {
+            wakeUpAssistant("🎙️ Seni dinliyorum...")
         }
         return START_STICKY
+    }
+
+    private fun startAsForeground() {
+        val channelId = "niko_voice_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "Niko Sesli Asistan", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+        val notification: Notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Niko Asistan Nöbette")
+            .setContentText("'Hey Niko' dediğinde sağ alttan açılır")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     override fun onCreate() {
@@ -323,47 +358,31 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         tts = TextToSpeech(this, this)
 
-        // Gemini Birebir Kopyası Şeffaf Sarı Yüzen Kapsül Bar
+        // Sağ Alt Köşe Şeffaf Sarı Google Asistan / Gemini Hapı (Normalde GİZLİ durur, sadece "Hey Niko" deyince çıkar)
         val geminiPill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(45, 28, 45, 28)
+            visibility = View.GONE // Tuş kalabalığı yok! Sadece seslenince görünür.
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 80f
-                setColor(Color.parseColor("#CC1C1917")) // Yarı şeffaf koyu cam
-                setStroke(3, Color.parseColor("#D9FBBF24")) // Parlak altın sarısı neon kenarlık
+                setColor(Color.parseColor("#D918181B")) // Şeffaf Koyu Cam
+                setStroke(3, Color.parseColor("#FBBF24")) // Parlak Altın Sarısı Çerçeve
             }
         }
 
-        val plusIcon = TextView(this).apply {
+        val starIcon = TextView(this).apply {
             text = "✦  "
             textSize = 18f
             setTextColor(Color.parseColor("#FBBF24"))
-            setOnClickListener {
-                val appIntent = Intent(this@OverlayService, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(appIntent)
-            }
         }
 
         pillText = TextView(this).apply {
-            text = "Niko'ya sorun"
+            text = "Niko dinliyor..."
             textSize = 15f
             setTextColor(Color.parseColor("#FEF08A"))
-            setPadding(10, 0, 40, 0)
-            setOnClickListener {
-                triggerDirectListen()
-            }
-        }
-
-        val micIcon = TextView(this).apply {
-            text = "🎙️  "
-            textSize = 16f
-            setOnClickListener {
-                triggerDirectListen()
-            }
+            setPadding(8, 0, 35, 0)
         }
 
         waveIndicator = TextView(this).apply {
@@ -371,25 +390,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F59E0B"))
-            setOnClickListener {
-                triggerDirectListen()
-            }
         }
 
-        val closeIcon = TextView(this).apply {
-            text = "   ✕"
-            textSize = 13f
-            setTextColor(Color.parseColor("#80FEF08A"))
-            setOnClickListener {
-                stopSelf()
-            }
-        }
-
-        geminiPill.addView(plusIcon)
+        geminiPill.addView(starIcon)
         geminiPill.addView(pillText)
-        geminiPill.addView(micIcon)
         geminiPill.addView(waveIndicator)
-        geminiPill.addView(closeIcon)
 
         overlayView = geminiPill
 
@@ -399,6 +404,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        // Tam Sağ Alt Köşe Konumlandırması (Google Asistan / Gemini Birebir)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -406,28 +412,39 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 90
+            gravity = Gravity.BOTTOM or Gravity.END
+            x = 45
+            y = 75
         }
 
         windowManager.addView(overlayView, params)
 
-        // Kulak tuşu olmadan doğrudan kesintisiz "Hey Niko" dinlemesini başlat
-        mainHandler.postDelayed({ startSeamlessListening() }, 800)
+        setupPersistentRecognizer()
+        mainHandler.postDelayed({ startListeningSafely() }, 600)
     }
 
-    private fun triggerDirectListen() {
-        tts?.stop()
-        isSpeaking = false
-        isProcessing = false
-        isDirectCommandMode = true
-        updateUI("DİNLİYOR", "🎙️ Dinliyorum...", true)
-        startSeamlessListening()
+    // Sağ alt köşeden şeffaf sarı barı çıkaran fonksiyon
+    private fun wakeUpAssistant(message: String) {
+        mainHandler.post {
+            mainHandler.removeCallbacks(hideRunnable)
+            isAwakeForCommand = true
+            overlayView.visibility = View.VISIBLE
+            pillText.text = message.take(44)
+            MainActivity.visualizer?.stateText = "DİNLİYOR"
+            MainActivity.visualizer?.isSpeakingOrListening = true
+            MainActivity.subtitleView?.text = message
+            if (!isListeningNow && !isSpeaking && !isProcessing) {
+                startListeningSafely()
+            }
+            // 10 saniye ses gelmezse geri gizle
+            mainHandler.postDelayed(hideRunnable, 10000)
+        }
     }
 
     private fun updateUI(state: String, subtitle: String, active: Boolean) {
         mainHandler.post {
-            pillText.text = subtitle.take(42)
+            overlayView.visibility = View.VISIBLE
+            pillText.text = subtitle.take(44)
             MainActivity.visualizer?.stateText = state
             MainActivity.visualizer?.isSpeakingOrListening = active
             MainActivity.subtitleView?.text = subtitle
@@ -436,27 +453,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val trLocale = Locale("tr", "TR")
-            tts?.language = trLocale
-
-            // Robotik sesi önlemek için en kaliteli doğal erkek sesini (Network/Wavenet) seç
+            tts?.language = Locale("tr", "TR")
             try {
                 val voices = tts?.voices
                 if (voices != null) {
                     val bestVoice = voices.firstOrNull {
-                        it.locale.language == "tr" && (it.name.contains("erkek", true) || it.name.contains("male", true) || it.name.contains("network", true) || it.name.contains("wavenet", true))
-                    } ?: voices.firstOrNull {
-                        it.locale.language == "tr" && !it.isNetworkConnectionRequired
+                        it.locale.language == "tr" && (it.name.contains("male", true) || it.name.contains("iom", true) || it.name.contains("network", true) || it.name.contains("wavenet", true))
                     }
-                    if (bestVoice != null) {
-                        tts?.voice = bestVoice
-                    }
+                    if (bestVoice != null) tts?.voice = bestVoice
                 }
             } catch (e: Exception) {}
 
-            // JARVIS Ses Tonu Ayarı: Tok, karizmatik ve akıcı
-            tts?.setPitch(0.85f)      // Daha tok ve derin Jarvis tonu
-            tts?.setSpeechRate(1.06f) // Doğal ve akıcı konuşma hızı
+            tts?.setPitch(0.84f)      // Karizmatik Jarvis/Niko kalınlığı
+            tts?.setSpeechRate(1.06f) // Akıcı hız
 
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -468,26 +477,27 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 override fun onStart(utteranceId: String?) {
                     isSpeaking = true
                     MainActivity.visualizer?.isSpeakingOrListening = true
-                    MainActivity.visualizer?.audioLevel = 3.5f
+                    MainActivity.visualizer?.audioLevel = 4.0f
                 }
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
                     isProcessing = false
-                    updateUI("HAZIR", "Niko'ya sorun", false)
-                    mainHandler.postDelayed({ startSeamlessListening() }, 400)
+                    mainHandler.postDelayed(hideRunnable, 3500) // Konuşma bitince 3.5 sn sonra sağ alttaki barı gizle
+                    mainHandler.postDelayed({ startListeningSafely() }, 300)
                 }
                 override fun onError(utteranceId: String?) {
                     isSpeaking = false
                     isProcessing = false
-                    mainHandler.postDelayed({ startSeamlessListening() }, 400)
+                    mainHandler.postDelayed(hideRunnable, 2000)
+                    mainHandler.postDelayed({ startListeningSafely() }, 300)
                 }
             })
         }
     }
 
     private fun speak(text: String) {
-        speechRecognizer?.destroy()
-        speechRecognizer = null
+        try { speechRecognizer?.cancel() } catch (e: Exception) {}
+        isListeningNow = false
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.mode = AudioManager.MODE_NORMAL
@@ -497,95 +507,90 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         val params = Bundle()
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisUtterance")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "NikoUtterance")
     }
 
-    // Google Gri Kutusunu Açmadan Arka Planda Şeffaf Dinleyen Motor
-    private fun startSeamlessListening() {
-        if (isSpeaking || isProcessing) return
+    // Mikrofonu Silmeden Tek Seferde Kurup Kesintisiz Kullanan Hızlı Motor
+    private fun setupPersistentRecognizer() {
         mainHandler.post {
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                }
-
-                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        if (isDirectCommandMode) {
-                            updateUI("DİNLİYOR", "🎙️ Dinliyorum...", true)
-                        }
-                    }
-                    override fun onBeginningOfSpeech() {
-                        if (isDirectCommandMode) {
-                            MainActivity.visualizer?.isSpeakingOrListening = true
-                        }
-                    }
-                    override fun onRmsChanged(rmsdB: Float) {
-                        val level = rmSdBToLevel(rmsdB)
-                        MainActivity.visualizer?.audioLevel = level
-                        if (isDirectCommandMode) {
-                            waveIndicator.text = if (level > 2.5f) "IlıI" else "ılı"
-                        }
-                    }
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-                    override fun onEndOfSpeech() {}
-                    override fun onError(error: Int) {
-                        if (isDirectCommandMode) {
-                            isDirectCommandMode = false
-                            updateUI("HAZIR", "Niko'ya sorun", false)
-                        }
-                        if (!isSpeaking && !isProcessing) {
-                            mainHandler.postDelayed({ startSeamlessListening() }, 900)
-                        }
-                    }
-                    override fun onResults(results: Bundle?) {
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!matches.isNullOrEmpty()) {
-                            handleSpokenText(matches[0])
-                        } else {
-                            mainHandler.postDelayed({ startSeamlessListening() }, 600)
-                        }
-                    }
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!matches.isNullOrEmpty()) {
-                            val partial = matches[0]
-                            val lower = partial.lowercase(Locale("tr", "TR"))
-                            if (isDirectCommandMode) {
-                                pillText.text = partial.take(38)
-                                MainActivity.subtitleView?.text = partial
-                            } else if (lower.contains("niko") || lower.contains("nico")) {
-                                // "Hey Niko" duyulduğu an bar canlanır!
-                                isDirectCommandMode = true
-                                updateUI("DİNLİYOR", "🎙️ $partial", true)
-                            }
-                        }
-                    }
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-
-                speechRecognizer?.startListening(intent)
-            } catch (e: Exception) {
-                mainHandler.postDelayed({ startSeamlessListening() }, 1500)
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
+            recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
+
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    isListeningNow = true
+                }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {
+                    val level = if (rmsdB < 0) 0.5f else rmsdB.coerceIn(0.5f, 10f)
+                    if (isAwakeForCommand) {
+                        MainActivity.visualizer?.audioLevel = level
+                        waveIndicator.text = if (level > 2.5f) "IlıI" else "ılı"
+                    }
+                }
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {
+                    isListeningNow = false
+                }
+                override fun onError(error: Int) {
+                    isListeningNow = false
+                    if (!isSpeaking && !isProcessing) {
+                        mainHandler.postDelayed({ startListeningSafely() }, 350)
+                    }
+                }
+                override fun onResults(results: Bundle?) {
+                    isListeningNow = false
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        handleSpokenText(matches[0])
+                    } else {
+                        startListeningSafely()
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        val partial = matches[0]
+                        val lower = partial.lowercase(Locale("tr", "TR"))
+
+                        if (!isAwakeForCommand && (lower.contains("niko") || lower.contains("nico"))) {
+                            // "Hey Niko" dediğin salisede sağ alttan şeffaf sarı bar fırlar!
+                            wakeUpAssistant("🎙️ $partial")
+                        } else if (isAwakeForCommand) {
+                            mainHandler.removeCallbacks(hideRunnable)
+                            pillText.text = partial.take(44)
+                            MainActivity.subtitleView?.text = partial
+                        }
+                    }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
         }
     }
 
-    private fun rmSdBToLevel(rmsdB: Float): Float {
-        return if (rmsdB < 0) 0.5f else rmsdB.coerceIn(0.5f, 10f)
+    private fun startListeningSafely() {
+        if (isSpeaking || isProcessing || isListeningNow) return
+        mainHandler.post {
+            try {
+                speechRecognizer?.startListening(recognizerIntent)
+            } catch (e: Exception) {
+                setupPersistentRecognizer()
+                mainHandler.postDelayed({ startListeningSafely() }, 500)
+            }
+        }
     }
 
     private fun handleSpokenText(spoken: String) {
         val lower = spoken.lowercase(Locale("tr", "TR"))
         val hasWakeWord = lower.contains("niko") || lower.contains("nico")
 
-        if (isDirectCommandMode || hasWakeWord) {
-            isDirectCommandMode = false
+        if (isAwakeForCommand || hasWakeWord) {
+            mainHandler.removeCallbacks(hideRunnable)
             val cleanCmd = lower
                 .replace("hey niko", "")
                 .replace("hey nico", "")
@@ -594,16 +599,15 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 .trim()
 
             if (cleanCmd.isEmpty()) {
-                // Sadece "Hey Niko" dediyse hemen dinleme modunu aktif tut
-                isDirectCommandMode = true
-                updateUI("DİNLİYOR", "🎙️ Seni dinliyorum efendim...", true)
-                mainHandler.postDelayed({ startSeamlessListening() }, 300)
+                // Sadece "Hey Niko" dediyse sağ alttaki barı açık tut ve komutu bekle
+                wakeUpAssistant("🎙️ Seni dinliyorum...")
+                startListeningSafely()
             } else {
+                isAwakeForCommand = false
                 processCommand(cleanCmd)
             }
         } else {
-            // Wake word yoksa sessizce nöbete devam et
-            mainHandler.postDelayed({ startSeamlessListening() }, 400)
+            startListeningSafely()
         }
     }
 
@@ -623,11 +627,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             val intent = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
             reply("Ayarları açıyorum efendim.")
-            return
-        }
-        if (lower.contains("kapat kendini") || lower.contains("görüşürüz")) {
-            reply("Sistem kapatılıyor efendim.")
-            mainHandler.postDelayed({ stopSelf() }, 2500)
             return
         }
 
@@ -757,7 +756,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                     }
                 } else {
                     activeModelName = null
-                    reply("Bağlantı hatası kodu: ${response.code}")
+                    reply("Hata kodu: ${response.code}")
                 }
             }
         })
