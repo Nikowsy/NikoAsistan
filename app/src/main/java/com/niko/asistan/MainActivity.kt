@@ -37,7 +37,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -170,6 +169,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         var visualizer: NikoVisualizerView? = null
         var subtitleView: TextView? = null
+        // API Anahtarı doğrudan kodun içine gömüldü[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)
+        const val EMBEDDED_KEY = "AQ.Ab8RN6KZYPqSekpNWFEnuG42klSAK_TKxGeFNc1YbcduzUm0kA"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -178,8 +179,6 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         }
-
-        val prefs = getSharedPreferences("NikoPrefs", Context.MODE_PRIVATE)
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#050505"))
@@ -191,10 +190,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 70, 40, 50)
         }
 
-        // Üst Başlık: N · I · K · O
         val topHeader = TextView(this).apply {
             text = "N  ·  I  ·  K  ·  O"
-            textSize = 24f
+            textSize = 26f
             setTextColor(Color.parseColor("#F59E0B"))
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             gravity = Gravity.CENTER
@@ -202,7 +200,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val nikoView = NikoVisualizerView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(680, 680).apply {
+            layoutParams = LinearLayout.LayoutParams(720, 720).apply {
                 gravity = Gravity.CENTER
             }
             setOnClickListener {
@@ -212,69 +210,45 @@ class MainActivity : AppCompatActivity() {
         visualizer = nikoView
 
         val subText = TextView(this).apply {
-            text = "Uygulamayı kapatsan bile \"Hey Niko\" dediğinde sağ alttan açılır"
+            text = "Arka planda aktif. \"Hey Niko\" de ve sağ alttan asistanı çağır."
             textSize = 15f
             setTextColor(Color.parseColor("#FEF08A"))
             gravity = Gravity.CENTER
-            setPadding(40, 20, 40, 30)
+            setPadding(40, 20, 40, 40)
         }
         subtitleView = subText
 
-        val bottomPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(30, 15, 30, 15)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 50f
-                setColor(Color.parseColor("#22F59E0B"))
-                setStroke(2, Color.parseColor("#80FBBF24"))
-            }
-        }
-
-        val apiInput = EditText(this).apply {
-            hint = "API Anahtarı (AQ. / AIza)"
-            setHintTextColor(Color.parseColor("#9CA3AF"))
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            background = null
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setText(prefs.getString("GEMINI_KEY", ""))
-        }
-
         val btnActivate = Button(this).apply {
-            text = "KAYDET & NÖBETİ BAŞLAT"
-            textSize = 11f
+            text = "NÖBETİ BAŞLAT & ÇIK"
+            textSize = 14f
             setTextColor(Color.BLACK)
+            setPadding(50, 40, 50, 40)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 40f
                 setColor(Color.parseColor("#FBBF24"))
             }
             setOnClickListener {
-                prefs.edit().putString("GEMINI_KEY", apiInput.text.toString().trim()).apply()
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
                     Toast.makeText(this@MainActivity, "Lütfen Ekran Üstü İznini Açın", Toast.LENGTH_LONG).show()
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 } else {
                     startNikoService("START_BG")
-                    Toast.makeText(this@MainActivity, "Niko Arka Planda Aktif! 'Hey Niko' diyebilirsin.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Niko Aktif! Uygulamadan çıkabilirsin.", Toast.LENGTH_LONG).show()
+                    finish()
                 }
             }
         }
 
-        bottomPanel.addView(apiInput)
-        bottomPanel.addView(btnActivate)
-
         mainCol.addView(topHeader)
-        mainCol.addView(nikoView, LinearLayout.LayoutParams(680, 680))
+        mainCol.addView(nikoView, LinearLayout.LayoutParams(720, 720))
         mainCol.addView(subText)
-        mainCol.addView(bottomPanel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        mainCol.addView(btnActivate)
 
         root.addView(mainCol)
         setContentView(root)
 
-        if (Settings.canDrawOverlays(this) && !prefs.getString("GEMINI_KEY", "").isNullOrEmpty()) {
+        if (Settings.canDrawOverlays(this)) {
             startNikoService("START_BG")
         }
     }
@@ -358,17 +332,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         tts = TextToSpeech(this, this)
 
-        // Sağ Alt Köşe Şeffaf Sarı Google Asistan / Gemini Hapı (Normalde GİZLİ durur, sadece "Hey Niko" deyince çıkar)
         val geminiPill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(45, 28, 45, 28)
-            visibility = View.GONE // Tuş kalabalığı yok! Sadece seslenince görünür.
+            visibility = View.GONE
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 80f
-                setColor(Color.parseColor("#D918181B")) // Şeffaf Koyu Cam
-                setStroke(3, Color.parseColor("#FBBF24")) // Parlak Altın Sarısı Çerçeve
+                setColor(Color.parseColor("#D918181B"))
+                setStroke(3, Color.parseColor("#FBBF24"))
             }
         }
 
@@ -404,7 +377,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        // Tam Sağ Alt Köşe Konumlandırması (Google Asistan / Gemini Birebir)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -423,7 +395,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         mainHandler.postDelayed({ startListeningSafely() }, 600)
     }
 
-    // Sağ alt köşeden şeffaf sarı barı çıkaran fonksiyon
     private fun wakeUpAssistant(message: String) {
         mainHandler.post {
             mainHandler.removeCallbacks(hideRunnable)
@@ -436,7 +407,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             if (!isListeningNow && !isSpeaking && !isProcessing) {
                 startListeningSafely()
             }
-            // 10 saniye ses gelmezse geri gizle
             mainHandler.postDelayed(hideRunnable, 10000)
         }
     }
@@ -464,8 +434,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 }
             } catch (e: Exception) {}
 
-            tts?.setPitch(0.84f)      // Karizmatik Jarvis/Niko kalınlığı
-            tts?.setSpeechRate(1.06f) // Akıcı hız
+            tts?.setPitch(0.84f)
+            tts?.setSpeechRate(1.06f)
 
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -482,7 +452,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
                     isProcessing = false
-                    mainHandler.postDelayed(hideRunnable, 3500) // Konuşma bitince 3.5 sn sonra sağ alttaki barı gizle
+                    mainHandler.postDelayed(hideRunnable, 3500)
                     mainHandler.postDelayed({ startListeningSafely() }, 300)
                 }
                 override fun onError(utteranceId: String?) {
@@ -510,7 +480,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "NikoUtterance")
     }
 
-    // Mikrofonu Silmeden Tek Seferde Kurup Kesintisiz Kullanan Hızlı Motor
     private fun setupPersistentRecognizer() {
         mainHandler.post {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
@@ -559,7 +528,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                         val lower = partial.lowercase(Locale("tr", "TR"))
 
                         if (!isAwakeForCommand && (lower.contains("niko") || lower.contains("nico"))) {
-                            // "Hey Niko" dediğin salisede sağ alttan şeffaf sarı bar fırlar!
                             wakeUpAssistant("🎙️ $partial")
                         } else if (isAwakeForCommand) {
                             mainHandler.removeCallbacks(hideRunnable)
@@ -599,7 +567,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 .trim()
 
             if (cleanCmd.isEmpty()) {
-                // Sadece "Hey Niko" dediyse sağ alttaki barı açık tut ve komutu bekle
                 wakeUpAssistant("🎙️ Seni dinliyorum...")
                 startListeningSafely()
             } else {
@@ -630,14 +597,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        val apiKey = getSharedPreferences("NikoPrefs", Context.MODE_PRIVATE).getString("GEMINI_KEY", "") ?: ""
-        if (apiKey.isEmpty()) {
-            reply("Lütfen önce ana ekrandan anahtarı kaydedin efendim.")
-            return
-        }
-
         updateUI("DÜŞÜNÜYOR", "⏳ $command", true)
-        askGeminiSmart(command, apiKey.trim())
+        askGeminiSmart(command, MainActivity.EMBEDDED_KEY)
     }
 
     private fun openApp(packageName: String, appName: String) {
@@ -692,7 +653,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
                         val selectedModel = available.firstOrNull { it.contains("hydrogen", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini-4", ignoreCase = true) }
-                            ?: available.firstOrNull { it.contains("gemini-3", ignoreCase = true) }
+                            ?: available.firstOrNull { it.centerOrNull("gemini-3", ignoreCase = true) == true }
                             ?: available.firstOrNull { it.contains("gemini-2.5", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini-2.0", ignoreCase = true) }
                             ?: available.firstOrNull { it.contains("gemini", ignoreCase = true) }
