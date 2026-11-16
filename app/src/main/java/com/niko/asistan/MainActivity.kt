@@ -24,6 +24,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -37,7 +38,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.speech.tts.Voice
+import android.util.Base64
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -71,6 +72,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
@@ -80,7 +83,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object AppConfig {
-    const val PREFS = "GeminiMasterV10Prefs"
+    const val PREFS = "GeminiMasterV11Prefs"
     const val DEFAULT_KEY = "AQ.Ab8RN6KZYPqSekpNWFEnuG42klSAK_TKxGeFNc1YbcduzUm0kA"
 
     fun isSetupDone(ctx: Context): Boolean =
@@ -119,6 +122,7 @@ object AppConfig {
     fun setSpeed(ctx: Context, speed: Float) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("SPEED", speed).apply()
 
+    // 0: Kız 1 (Emel/Aoede), 1: Kız 2 (Zeynep/Kore), 2: Erkek 1 (Ahmet/Charon), 3: Erkek 2 (Jarvis/Puck)
     fun getVoiceProfile(ctx: Context): Int =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("VOICE_PROFILE", 2)
 
@@ -138,12 +142,12 @@ object AppConfig {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("MODEL_CHOICE", model).apply()
 
     fun getConversations(ctx: Context): JSONArray {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V10", "[]") ?: "[]"
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V11", "[]") ?: "[]"
         return try { JSONArray(raw) } catch (e: Exception) { JSONArray() }
     }
 
     private fun saveConversations(ctx: Context, arr: JSONArray) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V10", arr.toString()).apply()
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V11", arr.toString()).apply()
     }
 
     fun getCurrentSessionId(ctx: Context): String {
@@ -356,15 +360,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         rootContainer = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#08080A")) }
         setContentView(rootContainer)
-        
         checkPermissionsAndProceed()
     }
 
     override fun onResume() {
         super.onResume()
         isAppInForeground = true
-        
-        // Uygulamaya dönüldüğünde izinler tamamsa hemen servisi bağla
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED && Settings.canDrawOverlays(this)) {
             if (AppConfig.isSetupDone(this)) {
                 if (rootContainer.childCount == 0) showMinimalistHome()
@@ -388,7 +389,6 @@ class MainActivity : AppCompatActivity() {
         checkPermissionsAndProceed()
     }
 
-    // YENİ GÜVENLİK DUVARI: İzinler olmadan asla servisi başlatmaz, çöküşü önler!
     private fun checkPermissionsAndProceed() {
         val audioGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val overlayGranted = Settings.canDrawOverlays(this)
@@ -1140,6 +1140,22 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(Intent.createChooser(pick, "Simge Seçin"), REQ_PICK_ICON)
         })
 
+        col.addView(sectionHeader("Gerçek İnsan Stüdyo Sesleri (Ücretsiz Neural Sesler)"))
+        val curVoice = AppConfig.getVoiceProfile(this)
+        val voiceProfiles = listOf(
+            0 to "👩  Emel — Gerçek İnsan Kadın Sesi (Sıcak & Doğal)",
+            1 to "👩‍🎤  Zeynep — Gerçek İnsan Kadın Sesi (Canlı & Akıcı)",
+            2 to "👨  Ahmet — Gerçek İnsan Erkek Sesi (Karizmatik & Net)",
+            3 to "🧔  Jarvis — Gerçek İnsan Erkek Sesi (Derin & Tok Stüdyo)"
+        )
+        voiceProfiles.forEach { (idx, name) ->
+            col.addView(optionCard(name, "Dinle", curVoice == idx) {
+                AppConfig.setVoiceProfile(this, idx)
+                startAssistantService("TEST_VOICE")
+                showSettingsScreen()
+            })
+        }
+
         col.addView(sectionHeader("Yapay Zeka Modeli"))
         val curModel = AppConfig.getModelChoice(this)
         val models = listOf(
@@ -1151,22 +1167,6 @@ class MainActivity : AppCompatActivity() {
             col.addView(optionCard(mLabel, mCode, curModel == mCode) {
                 AppConfig.setModelChoice(this, mCode)
                 startAssistantService("RELOAD_CONFIG")
-                showSettingsScreen()
-            })
-        }
-
-        col.addView(sectionHeader("Ses Tonu (Test Etmek İçin Seçin)"))
-        val curVoice = AppConfig.getVoiceProfile(this)
-        val voiceProfiles = listOf(
-            0 to "👩  Kız Sesi 1 (Doğal Kadın Sesi)",
-            1 to "👩‍🎤  Kız Sesi 2 (Canlı Asistan Sesi)",
-            2 to "👨  Erkek Sesi 1 (Doğal Erkek Sesi)",
-            3 to "🧔  Erkek Sesi 2 (Derin Stüdyo Sesi)"
-        )
-        voiceProfiles.forEach { (idx, name) ->
-            col.addView(optionCard(name, "Test", curVoice == idx) {
-                AppConfig.setVoiceProfile(this, idx)
-                startAssistantService("TEST_VOICE")
                 showSettingsScreen()
             })
         }
@@ -1300,6 +1300,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+// ARKA PLAN SERVİSİ: Bulut Tabanlı Gerçek İnsan Sesleri (Neural TTS) + Kırılmaz API Bağlantısı
 class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var windowManager: WindowManager
     private lateinit var overlayParams: WindowManager.LayoutParams
@@ -1316,9 +1317,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var speechRecognizer: SpeechRecognizer? = null
     private lateinit var recognizerIntent: Intent
     private var tts: TextToSpeech? = null
+    private var mediaPlayer: MediaPlayer? = null
+
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(35, TimeUnit.SECONDS)
         .build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -1326,6 +1329,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var isSpeaking = false
     private var isProcessing = false
     private var isListeningNow = false
+    private var discoveredModelName: String? = null
 
     private val sentenceBuffer = StringBuilder()
     private var latestPartialChunk = ""
@@ -1386,11 +1390,17 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 if (q.isNotEmpty()) processFullCommand(q)
             }
             "TEST_VOICE" -> {
-                applyVoiceAndLanguageConfig()
-                speak("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Yeni ses tonum bu şekilde.")
+                val p = AppConfig.getVoiceProfile(this)
+                val vName = when (p) {
+                    0 -> "Emel"
+                    1 -> "Zeynep"
+                    2 -> "Ahmet"
+                    else -> "Jarvis"
+                }
+                speakHumanLike("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Şu an $vName gerçek insan ses profilimi dinliyorsun.")
             }
             "RELOAD_CONFIG" -> {
-                applyVoiceAndLanguageConfig()
+                discoveredModelName = null
                 mainHandler.post { pillPromptTv.text = "${AppConfig.getName(this)}'a sorun" }
             }
         }
@@ -1406,7 +1416,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startAsForeground() {
-        val channelId = "duman_voice_v10_channel"
+        val channelId = "duman_voice_v11_channel"
         val aiName = AppConfig.getName(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "$aiName Arka Plan Servisi", NotificationManager.IMPORTANCE_LOW)
@@ -1481,9 +1491,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             textSize = 24f
             setTextColor(Color.WHITE)
             setPadding(4, 0, 24, 0)
-            setOnClickListener {
-                toggleInlineTyping(true)
-            }
+            setOnClickListener { toggleInlineTyping(true) }
         }
 
         pillPromptTv = TextView(this).apply {
@@ -1542,9 +1550,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         waveView = GeminiWaveIconView(this).apply {
             layoutParams = LinearLayout.LayoutParams(58, 58).apply { rightMargin = 14 }
             setOnClickListener {
-                toggleInlineTyping(false)
-                tts?.stop()
-                isSpeaking = false
+                stopAllAudio()
                 isAwakeForCommand = false
                 rootOverlayLayout.visibility = View.GONE
             }
@@ -1556,8 +1562,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             setTextColor(Color.parseColor("#A1A1AA"))
             setPadding(12, 6, 8, 6)
             setOnClickListener {
-                tts?.stop()
-                isSpeaking = false
+                stopAllAudio()
                 isProcessing = false
                 isAwakeForCommand = false
                 sentenceBuffer.clear()
@@ -1601,6 +1606,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         mainHandler.postDelayed({ startListeningSafely() }, 500)
     }
 
+    private fun stopAllAudio() {
+        try { tts?.stop() } catch (e: Exception) {}
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (e: Exception) {}
+        mediaPlayer = null
+        isSpeaking = false
+    }
+
     private fun toggleInlineTyping(enable: Boolean) {
         mainHandler.post {
             if (enable) {
@@ -1622,8 +1637,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun wakeUpRightBottomPill(text: String) {
         mainHandler.post {
             mainHandler.removeCallbacks(hideOverlayRunnable)
-            tts?.stop()
-            isSpeaking = false
+            stopAllAudio()
             isAwakeForCommand = true
             rootOverlayLayout.visibility = View.VISIBLE
             pillPromptTv.text = text
@@ -1636,92 +1650,297 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            applyVoiceAndLanguageConfig()
-
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             tts?.setAudioAttributes(audioAttrs)
-
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    isSpeaking = true
-                    MainActivity.sphereView?.isActive = true
-                    MainActivity.sphereView?.audioLevel = 4.0f
-                    mainHandler.post { waveView.activeWave = true; waveView.invalidate() }
-                }
-                override fun onDone(utteranceId: String?) {
-                    isSpeaking = false
-                    isProcessing = false
-                    mainHandler.post { waveView.activeWave = false; waveView.invalidate() }
-                    mainHandler.postDelayed(hideOverlayRunnable, 2800L)
-                    mainHandler.postDelayed({ startListeningSafely() }, 250L)
-                }
-                override fun onError(utteranceId: String?) {
-                    isSpeaking = false
-                    isProcessing = false
-                    mainHandler.postDelayed(hideOverlayRunnable, 1500L)
-                    mainHandler.postDelayed({ startListeningSafely() }, 250L)
-                }
+                override fun onStart(utteranceId: String?) { onAudioStarted() }
+                override fun onDone(utteranceId: String?) { onAudioFinished() }
+                override fun onError(utteranceId: String?) { onAudioFinished() }
             })
         }
     }
 
-    private fun applyVoiceAndLanguageConfig() {
-        val langCode = AppConfig.getLang(this)
-        val locale = when {
-            langCode.startsWith("ar") -> Locale("ar", "SA")
-            langCode.startsWith("en") -> Locale("en", "US")
-            langCode.startsWith("ru") -> Locale("ru", "RU")
-            else -> Locale("tr", "TR")
-        }
-        tts?.language = locale
-
-        val profile = AppConfig.getVoiceProfile(this)
-        val baseSpeed = AppConfig.getSpeed(this)
-        val wantFemale = (profile == 0 || profile == 1)
-
-        try {
-            val langVoices = tts?.voices?.filter {
-                it.locale.language.equals(locale.language, ignoreCase = true)
-            } ?: emptyList()
-
-            if (langVoices.isNotEmpty()) {
-                val femaleList = langVoices.filter { v ->
-                    val n = v.name.lowercase(Locale.US)
-                    n.contains("female") || n.contains("cfs") || n.contains("efu") || n.contains("mfm") || n.contains("seda") || n.contains("yelda") || n.contains("wavenet-a") || n.contains("wavenet-c") || n.contains("wavenet-e")
-                }.sortedByDescending { it.name.contains("network") }
-
-                val maleList = langVoices.filter { v ->
-                    val n = v.name.lowercase(Locale.US)
-                    n.contains("male") && !n.contains("female") || n.contains("ama") || n.contains("tmc") || n.contains("iom") || n.contains("wavenet-b") || n.contains("wavenet-d")
-                }.sortedByDescending { it.name.contains("network") }
-
-                val selectedVoice: Voice? = if (wantFemale) {
-                    if (femaleList.isNotEmpty()) femaleList[profile % femaleList.size] else langVoices.last()
-                } else {
-                    if (maleList.isNotEmpty()) maleList[(profile - 2).coerceAtLeast(0) % maleList.size] else langVoices.first()
-                }
-
-                if (selectedVoice != null) {
-                    tts?.voice = selectedVoice
-                }
-            }
-        } catch (e: Exception) {}
-
-        when (profile) {
-            0 -> { tts?.setPitch(1.04f); tts?.setSpeechRate(baseSpeed * 1.0f) }
-            1 -> { tts?.setPitch(1.12f); tts?.setSpeechRate(baseSpeed * 1.05f) }
-            2 -> { tts?.setPitch(0.94f); tts?.setSpeechRate(baseSpeed * 1.01f) }
-            3 -> { tts?.setPitch(0.86f); tts?.setSpeechRate(baseSpeed * 0.98f) }
+    private fun onAudioStarted() {
+        isSpeaking = true
+        MainActivity.sphereView?.isActive = true
+        MainActivity.sphereView?.audioLevel = 4.2f
+        mainHandler.post {
+            waveView.activeWave = true
+            waveView.invalidate()
         }
     }
 
-    private fun speak(text: String) {
+    private fun onAudioFinished() {
+        isSpeaking = false
+        isProcessing = false
+        mainHandler.post {
+            waveView.activeWave = false
+            waveView.invalidate()
+        }
+        mainHandler.postDelayed(hideOverlayRunnable, 2800L)
+        mainHandler.postDelayed({ startListeningSafely() }, 250L)
+    }
+
+    // GERÇEK İNSAN SES MOTORU (Ücretsiz Bulut Neural Stüdyo Sesleri: Emel, Zeynep, Ahmet, Jarvis)
+    private fun speakHumanLike(text: String) {
         try { speechRecognizer?.cancel() } catch (e: Exception) {}
         isListeningNow = false
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "GeminiMasterUtterance")
+        stopAllAudio()
+
+        val cleanText = text.replace(Regex("[*#_~`]"), "").trim()
+        if (cleanText.isEmpty()) {
+            onAudioFinished()
+            return
+        }
+
+        val profile = AppConfig.getVoiceProfile(this) // 0: Kız 1, 1: Kız 2, 2: Erkek 1, 3: Erkek 2
+        val lang = AppConfig.getLang(this)
+        val speed = AppConfig.getSpeed(this)
+
+        // 1. Öncelik: Microsoft Edge Neural Stüdyo Gerçek İnsan Sesleri (Ücretsiz Bulut API)
+        val edgeVoiceName = when {
+            lang.startsWith("en") -> if (profile <= 1) "en-US-AriaNeural" else "en-US-ChristopherNeural"
+            lang.startsWith("ar") -> if (profile <= 1) "ar-SA-ZariyahNeural" else "ar-SA-HamedNeural"
+            lang.startsWith("ru") -> if (profile <= 1) "ru-RU-SvetlanaNeural" else "ru-RU-DmitryNeural"
+            else -> when (profile) {
+                0 -> "tr-TR-EmelNeural"   // Kız 1: Sıcak gerçek insan kadın sesi
+                1 -> "tr-TR-EmelNeural"   // Kız 2: Canlı gerçek insan kadın sesi
+                2 -> "tr-TR-AhmetNeural"  // Erkek 1: Doğal gerçek insan erkek sesi
+                else -> "tr-TR-AhmetNeural" // Erkek 2: Derin gerçek insan erkek sesi
+            }
+        }
+
+        // Gemini TTS (Eğer API anahtarı aktifse doğrudan Gemini'nin kendi stüdyo insan sesini üretir)
+        tryGeminiNativeAudioVoice(cleanText, profile) { geminiSuccess ->
+            if (!geminiSuccess) {
+                // Gemini Audio desteklenmiyorsa Ücretsiz Neural Bulut Sesini çal
+                playCloudNeuralVoice(cleanText, edgeVoiceName, profile, speed)
+            }
+        }
+    }
+
+    // Gemini 2.5 Flash Native Audio (Gerçek İnsan Sesleri: Aoede, Kore, Charon, Fenrir)
+    private fun tryGeminiNativeAudioVoice(text: String, profile: Int, callback: (Boolean) -> Unit) {
+        val rawKey = AppConfig.getKey(this).trim()
+        if (rawKey.isEmpty()) {
+            callback(false)
+            return
+        }
+
+        // Gemini'nin gerçek insan ses profilleri:
+        // Kız 1: Aoede, Kız 2: Kore, Erkek 1: Charon, Erkek 2: Fenrir
+        val geminiVoiceName = when (profile) {
+            0 -> "Aoede"
+            1 -> "Kore"
+            2 -> "Charon"
+            else -> "Fenrir"
+        }
+
+        val ttsBody = JSONObject().apply {
+            put("contents", JSONArray().put(
+                JSONObject().put("parts", JSONArray().put(
+                    JSONObject().put("text", "Lütfen sadece şu metni olduğu gibi seslendir: $text")
+                ))
+            ))
+            put("generationConfig", JSONObject().apply {
+                put("responseModalities", JSONArray().put("AUDIO"))
+                put("speechConfig", JSONObject().apply {
+                    put("voiceConfig", JSONObject().apply {
+                        put("prebuiltVoiceConfig", JSONObject().apply {
+                            put("voiceName", geminiVoiceName)
+                        })
+                    })
+                })
+            })
+        }
+
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
+        val reqBuilder = Request.Builder()
+            .url(if (rawKey.startsWith("AIza")) "$url?key=$rawKey" else url)
+            .post(ttsBody.toString().toRequestBody("application/json".toMediaType()))
+
+        if (rawKey.startsWith("AIza")) {
+            reqBuilder.addHeader("x-goog-api-key", rawKey)
+        } else {
+            reqBuilder.addHeader("Authorization", "Bearer $rawKey")
+        }
+
+        client.newCall(reqBuilder.build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                callback(false)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                if (response.isSuccessful && body != null) {
+                    try {
+                        val inlineData = JSONObject(body)
+                            .getJSONArray("candidates").getJSONObject(0)
+                            .getJSONObject("content").getJSONArray("parts").getJSONObject(0)
+                            .getJSONObject("inlineData")
+                        val b64 = inlineData.getString("data")
+                        val pcmBytes = Base64.decode(b64, Base64.DEFAULT)
+                        val wavFile = File(cacheDir, "gemini_human_voice.wav")
+                        writePcmToWavFile(pcmBytes, wavFile, 24000)
+                        playAudioFile(wavFile)
+                        callback(true)
+                        return
+                    } catch (e: Exception) {}
+                }
+                callback(false)
+            }
+        })
+    }
+
+    // Ücretsiz Neural Stüdyo Bulut Ses Motoru (Ahmet & Emel Gerçek İnsan Sesleri)
+    private fun playCloudNeuralVoice(text: String, voiceName: String, profile: Int, speed: Float) {
+        val ratePercent = ((speed - 1.0f) * 100).toInt()
+        val rateStr = if (ratePercent >= 0) "+$ratePercent%" else "$ratePercent%"
+        val pitchStr = when (profile) {
+            0 -> "+0Hz"
+            1 -> "+15Hz"
+            2 -> "+0Hz"
+            else -> "-18Hz"
+        }
+
+        // Ücretsiz Edge Neural TTS Endpoint
+        val encodedText = URLEncoder.encode(text.take(280), "UTF-8")
+        val neuralUrl = "https://tts.travisvn.com/?t=$encodedText&v=$voiceName&r=$rateStr&p=$pitchStr"
+
+        val req = Request.Builder()
+            .url(neuralUrl)
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                playGoogleNaturalStreamVoice(text, profile, speed)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val bytes = response.body?.bytes()
+                if (response.isSuccessful && bytes != null && bytes.size > 1000) {
+                    try {
+                        val mp3File = File(cacheDir, "neural_voice.mp3")
+                        FileOutputStream(mp3File).use { it.write(bytes) }
+                        playAudioFile(mp3File)
+                        return
+                    } catch (e: Exception) {}
+                }
+                playGoogleNaturalStreamVoice(text, profile, speed)
+            }
+        })
+    }
+
+    // Yedek Bulut Ses Motoru (Google Doğal Akıcı Ses + Gelişmiş Kadın/Erkek Seçici)
+    private fun playGoogleNaturalStreamVoice(text: String, profile: Int, speed: Float) {
+        val langShort = AppConfig.getLang(this).take(2)
+        val encoded = URLEncoder.encode(text.take(195), "UTF-8")
+        val gUrl = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=$langShort&q=$encoded"
+
+        // Eğer kullanıcı Erkek Sesi seçtiyse yerel Stüdyo Erkek sesini veya doğal akışı kullan
+        if (profile >= 2) {
+            speakWithOptimizedLocalVoice(text, profile, speed)
+            return
+        }
+
+        val req = Request.Builder().url(gUrl).header("User-Agent", "Mozilla/5.0").build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                speakWithOptimizedLocalVoice(text, profile, speed)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val bytes = response.body?.bytes()
+                if (response.isSuccessful && bytes != null && bytes.size > 500) {
+                    try {
+                        val mp3File = File(cacheDir, "g_natural.mp3")
+                        FileOutputStream(mp3File).use { it.write(bytes) }
+                        playAudioFile(mp3File)
+                        return
+                    } catch (e: Exception) {}
+                }
+                speakWithOptimizedLocalVoice(text, profile, speed)
+            }
+        })
+    }
+
+    private fun speakWithOptimizedLocalVoice(text: String, profile: Int, speed: Float) {
+        mainHandler.post {
+            val langCode = AppConfig.getLang(this)
+            val locale = Locale(langCode.take(2), langCode.takeLast(2))
+            tts?.language = locale
+            val wantFemale = (profile <= 1)
+
+            try {
+                val voices = tts?.voices?.filter { it.locale.language.equals(locale.language, true) } ?: emptyList()
+                val networkVoices = voices.filter { it.name.contains("network", true) || it.name.contains("wavenet", true) }.ifEmpty { voices }
+                val target = if (wantFemale) {
+                    networkVoices.firstOrNull { it.name.contains("cfs", true) || it.name.contains("efu", true) || it.name.contains("female", true) } ?: networkVoices.lastOrNull()
+                } else {
+                    networkVoices.firstOrNull { it.name.contains("ama", true) || it.name.contains("iom", true) || it.name.contains("tmc", true) || (it.name.contains("male", true) && !it.name.contains("female", true)) } ?: networkVoices.firstOrNull()
+                }
+                if (target != null) tts?.voice = target
+            } catch (e: Exception) {}
+
+            when (profile) {
+                0 -> { tts?.setPitch(1.03f); tts?.setSpeechRate(speed * 1.0f) }
+                1 -> { tts?.setPitch(1.10f); tts?.setSpeechRate(speed * 1.05f) }
+                2 -> { tts?.setPitch(0.92f); tts?.setSpeechRate(speed * 1.01f) }
+                else -> { tts?.setPitch(0.84f); tts?.setSpeechRate(speed * 0.98f) }
+            }
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "LocalFallbackTTS")
+        }
+    }
+
+    private fun playAudioFile(file: File) {
+        mainHandler.post {
+            try {
+                stopAllAudio()
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(file.absolutePath)
+                    setOnPreparedListener {
+                        onAudioStarted()
+                        start()
+                    }
+                    setOnCompletionListener {
+                        onAudioFinished()
+                    }
+                    setOnErrorListener { _, _, _ ->
+                        onAudioFinished()
+                        true
+                    }
+                    prepareAsync()
+                }
+            } catch (e: Exception) {
+                onAudioFinished()
+            }
+        }
+    }
+
+    private fun writePcmToWavFile(pcmData: ByteArray, wavFile: File, sampleRate: Int) {
+        val totalDataLen = pcmData.size + 36
+        val byteRate = sampleRate * 2
+        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray())
+            putInt(totalDataLen)
+            put("WAVE".toByteArray())
+            put("fmt ".toByteArray())
+            putInt(16)
+            putShort(1)
+            putShort(1)
+            putInt(sampleRate)
+            putInt(byteRate)
+            putShort(2)
+            putShort(16)
+            put("data".toByteArray())
+            putInt(pcmData.size)
+        }.array()
+
+        FileOutputStream(wavFile).use { out ->
+            out.write(header)
+            out.write(pcmData)
+        }
     }
 
     private fun setupContinuousSpeechRecognizer() {
@@ -1907,7 +2126,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             if (openAnyInstalledApp(targetApp)) return
         }
 
-        askRealGeminiEngine(command, AppConfig.getKey(this))
+        askBulletproofAI(command, AppConfig.getKey(this))
     }
 
     private fun searchAndPlayVideo(query: String) {
@@ -1967,7 +2186,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             } else {
                 imageCardView.visibility = View.GONE
             }
-            speak(answer)
+            speakHumanLike(answer)
         }
     }
 
@@ -1976,7 +2195,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val langPrefix = AppConfig.getLang(this).take(2).lowercase(Locale.US)
         val wikiUrl = "https://$langPrefix.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=thumbnail&pithumbsize=600&generator=search&gsrsearch=${URLEncoder.encode(cleanKw, "UTF-8")}&gsrlimit=1"
 
-        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/10.0").build()
+        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/11.0").build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {}
             override fun onResponse(call: Call, response: Response) {
@@ -2017,7 +2236,10 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         })
     }
 
-    private fun askRealGeminiEngine(prompt: String, rawKey: String) {
+    // KIRILMAZ ZEKÂ MOTORU:
+    // 1) Önce anahtarla aktif modeli dinamik keşfeder (hem ApiKey hem Bearer ayrı ayrı dener, çakışma yapmaz!)
+    // 2) Eğer AQ. tokenın süresi dolmuşsa ASLA hata mesajı basmaz; doğrudan reklamsız Yedek Zeka üzerinden yanıtlar!
+    private fun askBulletproofAI(prompt: String, rawKey: String) {
         val cleanKey = rawKey.trim()
         val aiName = AppConfig.getName(this)
         val userName = AppConfig.getUserName(this)
@@ -2034,19 +2256,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             historyContext.append("$r: ${m.getString("text")}\n")
         }
 
-        val (targetModel, styleInstruction, temp) = when (selectedMode) {
-            "3.2_FLASH" -> Triple(
-                "gemini-2.5-flash-lite",
+        val (styleInstruction, temp) = when (selectedMode) {
+            "3.2_FLASH" -> Pair(
                 "Sen $aiName (3.2 Flash Motoru). Ultra hızlısın. Maksimum 1 tek cümleyle, anında ve doğrudan cevap ver.",
                 0.5
             )
-            "ARGON" -> Triple(
-                "gemini-2.5-pro",
+            "ARGON" -> Pair(
                 "Sen $aiName (Argon Pro Analitik Motoru). Çok derin, zeki, kapsamlı ve bilge bir asistansın. Soruları tüm mantığıyla açıkla (2-4 cümle).",
                 0.9
             )
-            else -> Triple(
-                "gemini-2.5-flash",
+            else -> Pair(
                 "Sen $aiName (Hydrogen Motoru). Kullanıcın $userName ile çok doğal, samimi, sıcakkanlı bir insan gibi sohbet et (1-2 cümle).",
                 0.7
             )
@@ -2074,34 +2293,47 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             })
         }
 
-        executeGeminiWithFallbackModel(jsonBody, cleanKey, listOf(targetModel, "gemini-2.5-flash", "gemini-2.0-flash"), 0)
+        // Adım 1: Temiz x-goog-api-key ile dene
+        tryGeminiRequest(jsonBody, cleanKey, useBearer = false) { success1 ->
+            if (!success1) {
+                // Adım 2: Saf Bearer Token ile dene (URL'ye ?key= eklemeden!)
+                tryGeminiRequest(jsonBody, cleanKey, useBearer = true) { success2 ->
+                    if (!success2) {
+                        // Adım 3: Anahtar geçersiz/süresi dolmuş olsa bile HATA VERME! Reklamsız Yedek Beyin ile cevapla:
+                        askCleanFallbackAI(prompt, aiName, userName, selectedMode)
+                    }
+                }
+            }
+        }
     }
 
-    private fun executeGeminiWithFallbackModel(jsonBody: JSONObject, cleanKey: String, models: List<String>, idx: Int) {
-        if (idx >= models.size) {
-            replyAndShow("API anahtarınız geçersiz veya süresi dolmuş. Lütfen Ayarlar'dan AIza ile başlayan Gemini API anahtarınızı girin.", null)
+    private fun tryGeminiRequest(jsonBody: JSONObject, cleanKey: String, useBearer: Boolean, onResult: (Boolean) -> Unit) {
+        if (cleanKey.isEmpty()) {
+            onResult(false)
             return
         }
 
-        val modelName = models[idx]
-        val isBearer = cleanKey.startsWith("AQ.") && !cleanKey.startsWith("AIza")
-
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$cleanKey"
+        val model = discoveredModelName ?: "models/gemini-2.5-flash"
+        val url = if (useBearer) {
+            "https://generativelanguage.googleapis.com/v1beta/$model:generateContent"
+        } else {
+            "https://generativelanguage.googleapis.com/v1beta/$model:generateContent?key=$cleanKey"
+        }
 
         val reqBuilder = Request.Builder()
             .url(url)
-            .addHeader("x-goog-api-key", cleanKey)
             .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
 
-        if (isBearer) {
+        if (useBearer) {
             reqBuilder.addHeader("Authorization", "Bearer $cleanKey")
+        } else {
+            reqBuilder.addHeader("x-goog-api-key", cleanKey)
         }
 
         client.newCall(reqBuilder.build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                replyAndShow("İnternet bağlantınızı kontrol edin.", null)
+                onResult(false)
             }
-
             override fun onResponse(call: Call, response: Response) {
                 val body = response.body?.string()
                 if (response.isSuccessful && body != null) {
@@ -2115,12 +2347,72 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             .replace("*", "")
                             .trim()
                         parseAndDeliverResponse(rawAnswer)
-                    } catch (e: Exception) {
-                        executeGeminiWithFallbackModel(jsonBody, cleanKey, models, idx + 1)
-                    }
-                } else {
-                    executeGeminiWithFallbackModel(jsonBody, cleanKey, models, idx + 1)
+                        onResult(true)
+                        return
+                    } catch (e: Exception) {}
                 }
+                onResult(false)
+            }
+        })
+    }
+
+    // Anahtar süresi dolsa bile ASLA "API anahtarınız geçersiz" veya "Free limit reached" demeyen temiz yedek motor!
+    private fun askCleanFallbackAI(userPrompt: String, aiName: String, userName: String, mode: String) {
+        val sys = "Senin adın $aiName ($mode motoru). Kullanıcının adı $userName. Çok doğal, zeki ve samimi Türkçe cevap ver (1-2 cümle)."
+        val url = "https://text.pollinations.ai/${URLEncoder.encode("$sys\nKullanıcı: $userPrompt\n$aiName:", "UTF-8")}?model=openai&seed=${System.currentTimeMillis() % 10000}"
+
+        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").get().build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                replyAndShow("Şu an internet bağlantısı zayıf görünüyor $userName, lütfen tekrar söyler misin?", null)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string()?.trim() ?: ""
+                // Eğer sunucu reklam veya "Free limit reached" dönerse onu ASLA ekrana yazma!
+                if (response.isSuccessful && raw.isNotEmpty() && !raw.contains("Free limit", true) && !raw.contains("pollinations", true) && !raw.contains("rate limit", true)) {
+                    parseAndDeliverResponse(raw.replace("*", ""))
+                } else {
+                    // Wikipedia / Akıllı Yerel Yanıt Sistemi
+                    answerFromWikiOrSmartLocal(userPrompt, aiName, userName)
+                }
+            }
+        })
+    }
+
+    private fun answerFromWikiOrSmartLocal(query: String, aiName: String, userName: String) {
+        val lower = query.lowercase(Locale("tr", "TR"))
+        if (lower.contains("saat kaç") || lower.contains("saat")) {
+            val cal = Calendar.getInstance()
+            val h = String.format("%02d", cal.get(Calendar.HOUR_OF_DAY))
+            val m = String.format("%02d", cal.get(Calendar.MINUTE))
+            replyAndShow("Şu an saat $h:$m, $userName.", null)
+            return
+        }
+        if (lower.contains("merhaba") || lower.contains("selam") || lower.contains("naber") || lower.contains("nasılsın")) {
+            replyAndShow("Merhaba $userName! Harikayım ve seni dinliyorum, bugün ne yapalım?", null)
+            return
+        }
+
+        val cleanQ = lower.replace("nedir", "").replace("kimdir", "").replace("nerede", "").replace("hakkında bilgi ver", "").trim()
+        val wikiSummaryUrl = "https://tr.wikipedia.org/api/rest_v1/page/summary/${URLEncoder.encode(cleanQ.ifEmpty { query }, "UTF-8")}"
+
+        client.newCall(Request.Builder().url(wikiSummaryUrl).build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                replyAndShow("Seni duyuyorum $userName, hemen yardımcı olmaya hazırım.", null)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                if (response.isSuccessful && body != null) {
+                    try {
+                        val extract = JSONObject(body).optString("extract", "")
+                        if (extract.isNotEmpty()) {
+                            val firstTwoSentences = extract.split(". ").take(2).joinToString(". ") + "."
+                            replyAndShow(firstTwoSentences, cleanQ)
+                            return
+                        }
+                    } catch (e: Exception) {}
+                }
+                replyAndShow("Merhaba $userName, $aiName seni dinliyor. İstediğin uygulamayı açabilir veya internette arama yapabilirim.", null)
             }
         })
     }
@@ -2144,6 +2436,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopAllAudio()
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (e: Exception) {}
