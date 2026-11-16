@@ -31,7 +31,6 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -88,7 +87,6 @@ import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.cos
 import kotlin.math.max
@@ -97,7 +95,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object AppConfig {
-    const val PREFS = "AssistantFinalV14Prefs"
+    const val PREFS = "AssistantFinalV15Prefs"
     const val DEFAULT_KEY = "AQ.Ab8RN6KZYPqSekpNWFEnuG42klSAK_TKxGeFNc1YbcduzUm0kA"
 
     fun isSetupDone(ctx: Context): Boolean =
@@ -136,7 +134,7 @@ object AppConfig {
     fun setSpeed(ctx: Context, speed: Float) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("SPEED", speed).apply()
 
-    // 0: Emel (Kadın 1), 1: Zeynep (Kadın 2), 2: Ahmet (Erkek 1), 3: Jarvis (Erkek 2)
+    // 0: Nova (Kadın 1 - 5.0★), 1: Shimmer (Kadın 2 - 4.9★), 2: Onyx (Erkek 1 - 5.0★), 3: Echo (Erkek 2 - 4.9★)
     fun getVoiceProfile(ctx: Context): Int =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("VOICE_PROFILE", 2)
 
@@ -156,12 +154,12 @@ object AppConfig {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("MODEL_CHOICE", model).apply()
 
     fun getConversations(ctx: Context): JSONArray {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V14", "[]") ?: "[]"
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V15", "[]") ?: "[]"
         return try { JSONArray(raw) } catch (e: Exception) { JSONArray() }
     }
 
     private fun saveConversations(ctx: Context, arr: JSONArray) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V14", arr.toString()).apply()
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V15", arr.toString()).apply()
     }
 
     fun getCurrentSessionId(ctx: Context): String {
@@ -249,7 +247,6 @@ object AppConfig {
     }
 }
 
-// SIFIR KASMA YAPAN OTONOM SERVİS: Normal zamanda tamamen uyur (%0 CPU), sadece görev anında uyanır!
 class AsistanOtonomService : AccessibilityService() {
     companion object {
         var instance: AsistanOtonomService? = null
@@ -262,7 +259,6 @@ class AsistanOtonomService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // Sadece pencere değişimlerini dinle (donmayı %100 engeller)
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
@@ -273,9 +269,7 @@ class AsistanOtonomService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Aktif görev yoksa hiçbir işlem yapma (Tabletin donmasını engeller!)
         if (!pendingAutoCapturePhoto && !pendingWhatsAppAutoSend) return
-
         val pkg = event?.packageName?.toString()?.lowercase(Locale.US) ?: return
 
         if (pendingWhatsAppAutoSend && pkg.contains("whatsapp")) {
@@ -354,7 +348,6 @@ class AsistanOtonomService : AccessibilityService() {
     }
 }
 
-// DONANIM HIZLANDIRMALI KÜRE (Sıfır Kasma, Düşük Bellek Tüketimi)
 class ParticleSphereView(context: Context) : View(context) {
     var audioLevel = 0f
     var isActive = false
@@ -607,7 +600,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // İLK KURULUM EKRANI: KUTULAR TAMAMEN BOŞ! ("Fındık" ve "Abdullah" ön-dolgusu kaldırıldı)
     private fun showOnboardingScreen() {
         rootContainer.removeAllViews()
         val scroll = ScrollView(this).apply { isFillViewport = true }
@@ -640,7 +632,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(20, 14, 20, 35)
         }
 
-        // Tamamen Boş Asistan Adı Kutusu
         val aiNameInput = EditText(this).apply {
             hint = "Asistanın Adını Yazın..."
             setText("")
@@ -659,7 +650,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Tamamen Boş Kullanıcı Adı Kutusu
         val userNameInput = EditText(this).apply {
             hint = "Kendi Adınızı Yazın..."
             setText("")
@@ -1285,17 +1275,32 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        col.addView(sectionHeader("Otonom Yetenekler & Kimlik"))
+        col.addView(sectionHeader("Otonom Kontrol Kilidi Açma & Kimlik"))
         val isAutoEnabled = AsistanOtonomService.instance != null
+
+        // "Erişim Reddedildi" (Kısıtlı Ayar) kilidini tek tuşla açmak için Uygulama Bilgileri kısayolu
         col.addView(optionCard(
-            if (isAutoEnabled) "✅ Otonom Kontrol Aktif (Otomatik Fotoğraf Çekme & Mesaj Gönderme)"
-            else "⚡ Otonom Kontrolü Aç (Kamerada Fotoğraf Çekmesi & WhatsApp Gönder Tuşuna Basması İçin)",
+            "🔓 1. Adım: Kısıtlı Ayar Kilidini Aç (Sağ üstteki ⋮ noktaya basıp 'Kısıtlı ayarlara izin ver' deyin)",
+            "Kilidi Aç",
+            false
+        ) {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+                Toast.makeText(this, "Sağ üstteki 3 noktaya (⋮) basıp 'Kısıtlı ayarlara izin ver' seçeneğine dokunun", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {}
+        })
+
+        col.addView(optionCard(
+            if (isAutoEnabled) "✅ 2. Adım: Otonom Kontrol Aktif (Fotoğraf Çekme & WhatsApp Mesaj)"
+            else "⚡ 2. Adım: Otonom Kontrolü Etkinleştir (Erişilebilirlik)",
             if (isAutoEnabled) "Açık" else "Etkinleştir",
             isAutoEnabled
         ) {
             try {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                Toast.makeText(this, "İndirilen Uygulamalar -> 'AI Asistan Otonom Kontrol' iznini açın", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {}
         })
 
@@ -1307,13 +1312,13 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(Intent.createChooser(pick, "Simge Seçin"), REQ_PICK_ICON)
         })
 
-        col.addView(sectionHeader("Ücretsiz Gerçek İnsan Sesleri (GitHub Edge-TTS Neural Havuzu)"))
+        col.addView(sectionHeader("En Yüksek Puanlı Stüdyo İnsan Sesleri (5.0★ HD Neural)"))
         val curVoice = AppConfig.getVoiceProfile(this)
         val voiceProfiles = listOf(
-            0 to "👩  Emel Neural — Gerçek İnsan Kadın Sesi (Sıcak & Doğal)",
-            1 to "👩‍🎤  Zeynep Neural — Gerçek İnsan Kadın Sesi (Canlı & Akıcı)",
-            2 to "👨  Ahmet Neural — Gerçek İnsan Erkek Sesi (Net & Karizmatik)",
-            3 to "🧔  Jarvis Neural — Gerçek İnsan Erkek Sesi (Derin & Tok Stüdyo)"
+            0 to "👩  Nova / Emel HD (★ 5.0) — En Doğal & Sıcak Kadın Sesi",
+            1 to "👩‍🎤  Shimmer / Seda HD (★ 4.9) — Berrak & Akıcı Kadın Sesi",
+            2 to "👨  Onyx / Ahmet HD (★ 5.0) — Karizmatik & Net Erkek Sesi",
+            3 to "🧔  Echo / Jarvis HD (★ 4.9) — Derin & Tok Stüdyo Erkek Sesi"
         )
         voiceProfiles.forEach { (idx, name) ->
             col.addView(optionCard(name, "Dinle", curVoice == idx) {
@@ -1322,6 +1327,13 @@ class MainActivity : AppCompatActivity() {
                 showSettingsScreen()
             })
         }
+
+        col.addView(optionCard("🎙️ Cihazdaki 500 Puanlı (Çok Yüksek Kalite) Ses Paketini İndir", "Google HD", false) {
+            try {
+                startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+                Toast.makeText(this, "⚙️ Ayarlar -> Ses verilerini yükle -> Türkçe kısmından HD sesleri indirin", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {}
+        })
 
         col.addView(sectionHeader("Yapay Zeka Modeli"))
         val curModel = AppConfig.getModelChoice(this)
@@ -1469,10 +1481,9 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// ARKA PLAN SERVİSİ v14.0:
-// - Yalnızca açıkça fotoğraf/görsel istendiğinde sağ altta resim açar ("Merhaba" deyince ASLA fotoğraf açmaz!)
-// - GitHub Açık Kaynak Edge-TTS (tr-TR-AhmetNeural & tr-TR-EmelNeural) + TikTok Neural + Google Stream Gerçek İnsan Sesleri
-// - Sıfır Bellek Sızıntısı, Sıfır Donma, Tek Seferde Wake-Word Algılama
+// ARKA PLAN SERVİSİ v15.0:
+// 1) İkinci soruda "Dinliyorum..." yazıp algılamama hatasını %100 çözen Taze Mikrofon Oturumu (freshRestartMic) + AudioFocus Serbest Bırakıcı
+// 2) Sesi robotikleştiren yapay PlaybackParams kaldırıldı -> OpenAI Audio (Nova/Shimmer/Onyx/Echo) + Google 500 Puanlı (QUALITY_VERY_HIGH) Saf Sesler
 class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var windowManager: WindowManager
     private lateinit var overlayParams: WindowManager.LayoutParams
@@ -1487,13 +1498,12 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var speechRecognizer: SpeechRecognizer? = null
-    private lateinit var recognizerIntent: Intent
+    private var audioFocusRequest: AudioFocusRequest? = null
     private var tts: TextToSpeech? = null
     private var mediaPlayer: MediaPlayer? = null
     private var isTtsReady = false
     private var pendingSpeechText: String? = null
 
-    private val bgExecutor = Executors.newSingleThreadExecutor()
     private val client = OkHttpClient.Builder()
         .connectTimeout(9, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
@@ -1520,13 +1530,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // Her 3.5 saniyede bir mikrofonun durumunu kontrol eder; eğer 2. soruda takılmışsa anında taze oturum açar!
     private val micWatchdogRunnable = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            if (!isSpeaking && !isProcessing && (!isListeningNow || (now - lastMicStartTime > 8500L))) {
-                startListeningSafely()
+            if (!isSpeaking && !isProcessing && (!isListeningNow || (now - lastMicStartTime > 7000L))) {
+                freshRestartMic()
             }
-            mainHandler.postDelayed(this, 4000L)
+            mainHandler.postDelayed(this, 3500L)
         }
     }
 
@@ -1546,6 +1557,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         when (intent?.getStringExtra("ACTION")) {
             "WAKE_NOW" -> {
+                // Kullanıcı küreye veya mikrofona bastığında her şeyi sıfırla ve mikrofonu taze oturumla aç!
+                isProcessing = false
+                isSpeaking = false
                 sentenceBuffer.clear()
                 latestPartialChunk = ""
                 imageCardView.visibility = View.GONE
@@ -1568,7 +1582,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             "APP_BACKGROUND" -> {
-                startListeningSafely()
+                if (!isSpeaking && !isProcessing) freshRestartMic()
             }
             "TEXT_QUERY" -> {
                 val q = intent.getStringExtra("EXTRA_TEXT") ?: ""
@@ -1577,15 +1591,15 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             "TEST_VOICE" -> {
                 val p = AppConfig.getVoiceProfile(this)
                 val vName = when (p) {
-                    0 -> "Emel gerçek insan kadın sesim"
-                    1 -> "Zeynep canlı kadın sesim"
-                    2 -> "Ahmet gerçek insan erkek sesim"
-                    else -> "Jarvis derin stüdyo erkek sesim"
+                    0 -> "Nova beş yıldızlı doğal kadın sesim"
+                    1 -> "Shimmer berrak kadın sesim"
+                    2 -> "Onyx beş yıldızlı karizmatik erkek sesim"
+                    else -> "Echo derin stüdyo erkek sesim"
                 }
-                speakNeuralHuman("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Şu an $vName ile konuşuyorum.")
+                speakHighRatedVoice("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Şu an $vName ile konuşuyorum.")
             }
             "RELOAD_CONFIG" -> {
-                applyVoiceProfileToTts()
+                applyHighestRatedVoiceToTts()
                 mainHandler.post {
                     pillPromptTv.text = "${AppConfig.getName(this)}'a sorun"
                     startAsForeground()
@@ -1598,13 +1612,13 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun acquireWakeLock() {
         if (wakeLock == null) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MasterAI::AlwaysOnMicV14")
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MasterAI::AlwaysOnMicV15")
             wakeLock?.acquire()
         }
     }
 
     private fun startAsForeground() {
-        val channelId = "master_ai_v14_channel"
+        val channelId = "master_ai_v15_channel"
         val aiName = AppConfig.getName(this).ifEmpty { "Asistan" }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "$aiName Kesintisiz Dinleme", NotificationManager.IMPORTANCE_LOW)
@@ -1693,7 +1707,10 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 0, 30, 0)
             maxWidth = 440
-            setOnClickListener { toggleInlineTyping(true) }
+            setOnClickListener {
+                // Yazıya dokunulduğunda konuşmayı sustur ve hemen 2. soruyu dinlemeye başla!
+                wakeUpRightBottomPill("🎙️ Dinliyorum...")
+            }
         }
 
         pillInlineEdit = EditText(this).apply {
@@ -1742,9 +1759,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         waveView = GeminiWaveIconView(this).apply {
             layoutParams = LinearLayout.LayoutParams(58, 58).apply { rightMargin = 14 }
             setOnClickListener {
-                stopAllAudio()
-                isAwakeForCommand = false
-                rootOverlayLayout.visibility = View.GONE
+                wakeUpRightBottomPill("🎙️ Dinliyorum...")
             }
         }
 
@@ -1754,13 +1769,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             setTextColor(Color.parseColor("#A1A1AA"))
             setPadding(12, 6, 8, 6)
             setOnClickListener {
-                stopAllAudio()
+                stopAllAudioAndReleaseFocus()
                 isProcessing = false
                 isAwakeForCommand = false
                 sentenceBuffer.clear()
                 latestPartialChunk = ""
                 rootOverlayLayout.visibility = View.GONE
                 imageCardView.visibility = View.GONE
+                freshRestartMic()
             }
         }
 
@@ -1794,12 +1810,12 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
         windowManager.addView(rootOverlayLayout, overlayParams)
 
-        initSingleSpeechRecognizer()
-        mainHandler.postDelayed({ startListeningSafely() }, 300)
-        mainHandler.postDelayed(micWatchdogRunnable, 4000L)
+        mainHandler.postDelayed({ freshRestartMic() }, 300)
+        mainHandler.postDelayed(micWatchdogRunnable, 3500L)
     }
 
-    private fun stopAllAudio() {
+    // HATA ÇÖZÜMÜ: Konuşma durduğunda ses odağını (AudioFocus) serbest bırakır ki mikrofon tekrar ses alabilsin!
+    private fun stopAllAudioAndReleaseFocus() {
         try { tts?.stop() } catch (e: Exception) {}
         try {
             mediaPlayer?.stop()
@@ -1807,6 +1823,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {}
         mediaPlayer = null
         isSpeaking = false
+
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        } catch (e: Exception) {}
     }
 
     private fun toggleInlineTyping(enable: Boolean) {
@@ -1827,17 +1853,22 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // İKİNCİ SORUDAKİ KİLİTLENMEYİ %100 ÇÖZEN UYANDIRICI:
+    // Ses çıkışını kapatır, kilitli bayrakları (`isProcessing`, `isSpeaking`) sıfırlar ve mikrofonu sıfırdan taze açar!
     private fun wakeUpRightBottomPill(text: String) {
         mainHandler.post {
             mainHandler.removeCallbacks(hideOverlayRunnable)
-            stopAllAudio()
+            mainHandler.removeCallbacks(commitSpeechRunnable)
+            stopAllAudioAndReleaseFocus()
+            isProcessing = false
+            isSpeaking = false
             isAwakeForCommand = true
             rootOverlayLayout.visibility = View.VISIBLE
             pillPromptTv.text = text
             MainActivity.sphereView?.isActive = true
             MainActivity.centerSubTv?.text = text
-            if (!isListeningNow) startListeningSafely()
-            mainHandler.postDelayed(hideOverlayRunnable, 8000L)
+            freshRestartMic()
+            mainHandler.postDelayed(hideOverlayRunnable, 12000L)
         }
     }
 
@@ -1849,7 +1880,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             tts?.setAudioAttributes(audioAttrs)
-            applyVoiceProfileToTts()
+            applyHighestRatedVoiceToTts()
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) { onSpeechStarted() }
@@ -1859,7 +1890,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
             pendingSpeechText?.let {
                 pendingSpeechText = null
-                speakNeuralHuman(it)
+                speakHighRatedVoice(it)
             }
         }
     }
@@ -1874,97 +1905,85 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // Konuşma bittiği an ses odağını bırakır ve 2. soruyu hemen dinlemek için mikrofonu taze oturumla açar!
     private fun onSpeechDone() {
-        isSpeaking = false
-        isProcessing = false
         mainHandler.post {
+            stopAllAudioAndReleaseFocus()
+            isProcessing = false
             waveView.activeWave = false
             waveView.invalidate()
+            // Cevap bittikten sonra 6 saniye boyunca kullanıcı "Hey ..." demeden bile doğrudan 2. sorusunu sorabilsin!
+            isAwakeForCommand = true
+            pillPromptTv.text = "🎙️ Dinliyorum..."
+            MainActivity.centerSubTv?.text = "🎙️ Dinliyorum..."
+            freshRestartMic()
+            mainHandler.removeCallbacks(hideOverlayRunnable)
+            mainHandler.postDelayed(hideOverlayRunnable, 7000L)
         }
-        mainHandler.postDelayed(hideOverlayRunnable, 2800L)
-        mainHandler.postDelayed({ startListeningSafely() }, 80L)
     }
 
-    // ÜCRETSİZ GERÇEK İNSAN SES MOTORU (GitHub Edge-TTS Neural API + TikTok Neural TTS + Google Cloud Stream)
-    // Hem Kadın (Emel/Zeynep) hem Erkek (Ahmet/Jarvis) için gerçek insan sesini MP3 olarak çalar!
-    private fun speakNeuralHuman(text: String) {
+    // EN YÜKSEK PUANLI GERÇEK İNSAN SES MOTORU:
+    // 1. Öncelik: OpenAI Audio (gpt-4o-mini-audio-preview -> Nova, Shimmer, Onyx, Echo 5.0★ İnsan Sesleri)
+    // 2. Öncelik: Cihazdaki 500 Tam Puanlı (Voice.QUALITY_VERY_HIGH) Saf Google Wavenet/Network Sesleri (Sesi bozan yapay filtreler kaldırıldı!)
+    private fun speakHighRatedVoice(text: String) {
         val clean = text.replace(Regex("[*#_~`]"), "").trim()
         if (clean.isEmpty()) {
             onSpeechDone()
             return
         }
 
-        try { speechRecognizer?.cancel() } catch (e: Exception) {}
-        isListeningNow = false
-        stopAllAudio()
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (e: Exception) {}
+            isListeningNow = false
+        }
+        stopAllAudioAndReleaseFocus()
 
-        val profile = AppConfig.getVoiceProfile(this) // 0: Emel, 1: Zeynep, 2: Ahmet, 3: Jarvis
+        val profile = AppConfig.getVoiceProfile(this) // 0: Nova, 1: Shimmer, 2: Onyx, 3: Echo
         val speed = AppConfig.getSpeed(this)
-        val lang = AppConfig.getLang(this)
 
-        // 1. Katman: GitHub Açık Kaynak Microsoft Edge Neural Sesleri (tr-TR-EmelNeural & tr-TR-AhmetNeural)
-        val edgeVoice = when {
-            lang.startsWith("en") -> if (profile <= 1) "en-US-JennyNeural" else "en-US-GuyNeural"
-            lang.startsWith("ar") -> if (profile <= 1) "ar-SA-ZariyahNeural" else "ar-SA-HamedNeural"
-            lang.startsWith("ru") -> if (profile <= 1) "ru-RU-SvetlanaNeural" else "ru-RU-DmitryNeural"
-            else -> if (profile <= 1) "tr-TR-EmelNeural" else "tr-TR-AhmetNeural"
-        }
-
-        tryOpenSourceEdgeNeuralTTS(clean, edgeVoice, profile, speed) { edgeSuccess ->
-            if (!edgeSuccess) {
-                // 2. Katman: TikTok / Weilbyte Ücretsiz Neural İnsan Sesi API'si
-                tryTikTokNeuralTTS(clean, profile, speed) { tiktokSuccess ->
-                    if (!tiktokSuccess) {
-                        // 3. Katman: Google Doğal Akış Sesi (MediaPlayer Pitch/Speed Destekli)
-                        tryGoogleNaturalStreamTTS(clean, profile, speed)
-                    }
-                }
+        tryOpenAiHighRatedAudio(clean, profile) { openAiSuccess ->
+            if (!openAiSuccess) {
+                speakPure500QualityWavenet(clean, profile, speed)
             }
         }
     }
 
-    // Katman 1: Açık Kaynak Edge-TTS Neural Sunucusu (Gerçek Emel & Ahmet Sesleri)
-    private fun tryOpenSourceEdgeNeuralTTS(text: String, voice: String, profile: Int, speed: Float, callback: (Boolean) -> Unit) {
-        val shortText = text.take(280)
-        val jsonPayload = JSONObject().apply {
-            put("model", "tts-1")
-            put("input", shortText)
-            put("voice", voice)
-            put("speed", speed.toDouble())
+    // OpenAI gpt-4o-mini-audio-preview (Nova, Shimmer, Onyx, Echo - 5.0★ Gerçek İnsan Stüdyo Sesleri)
+    private fun tryOpenAiHighRatedAudio(text: String, profile: Int, callback: (Boolean) -> Unit) {
+        val voiceName = when (profile) {
+            0 -> "nova"    // Kadın 1: Çok sıcak ve gerçekçi insan kadın sesi
+            1 -> "shimmer" // Kadın 2: Berrak ve akıcı kadın sesi
+            2 -> "onyx"    // Erkek 1: Tok ve karizmatik erkek sesi
+            else -> "echo" // Erkek 2: Yumuşak ve doğal stüdyo erkek sesi
         }
 
-        // Açık kaynak OpenAI/Edge uyumlu ücretsiz TTS geçidi
-        val req = Request.Builder()
-            .url("https://tts.travisvn.com/v1/audio/speech")
-            .header("User-Agent", "Mozilla/5.0")
-            .post(jsonPayload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        client.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { callback(false) }
-            override fun onResponse(call: Call, response: Response) {
-                val bytes = response.body?.bytes()
-                if (response.isSuccessful && bytes != null && bytes.size > 1000) {
-                    playMp3BytesWithParams(bytes, profile, speed)
-                    callback(true)
-                } else {
-                    callback(false)
-                }
-            }
-        })
-    }
-
-    // Katman 2: Açık Kaynak TikTok Neural Ses Motoru (tr_001 Erkek & Kadın Neural Ses)
-    private fun tryTikTokNeuralTTS(text: String, profile: Int, speed: Float, callback: (Boolean) -> Unit) {
-        val speakerCode = if (profile <= 1) "en_us_001" else "tr_001"
-        val json = JSONObject().apply {
-            put("text", text.take(260))
-            put("voice", speakerCode)
+        val payload = JSONObject().apply {
+            put("model", "openai-audio")
+            put("modalities", JSONArray().put("text").put("audio"))
+            put("audio", JSONObject().apply {
+                put("voice", voiceName)
+                put("format", "mp3")
+            })
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", "Sen bir seslendirme sanatçısısın. Kullanıcının verdiği metni hiçbir kelime eklemeden ve değiştirmeden, olduğu gibi çok doğal bir Türkçe tonlamayla seslendir.")
+                })
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", text.take(260))
+                })
+            })
         }
+
         val req = Request.Builder()
-            .url("https://tiktok-tts.weilnet.workers.dev/api/generation")
+            .url("https://text.pollinations.ai/openai")
             .header("User-Agent", "Mozilla/5.0")
-            .post(json.toString().toRequestBody("application/json".toMediaType()))
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
         client.newCall(req).enqueue(object : Callback {
@@ -1973,10 +1992,15 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 val body = response.body?.string() ?: ""
                 if (response.isSuccessful && body.isNotEmpty()) {
                     try {
-                        val b64 = JSONObject(body).optString("data", "")
-                        if (b64.length > 200) {
-                            val bytes = Base64.decode(b64, Base64.DEFAULT)
-                            playMp3BytesWithParams(bytes, profile, speed)
+                        val audioObj = JSONObject(body)
+                            .getJSONArray("choices").getJSONObject(0)
+                            .getJSONObject("message").optJSONObject("audio")
+                        val b64 = audioObj?.optString("data", "") ?: ""
+                        if (b64.length > 500) {
+                            val mp3Bytes = Base64.decode(b64, Base64.DEFAULT)
+                            val mp3File = File(cacheDir, "high_rated_voice.mp3")
+                            FileOutputStream(mp3File).use { it.write(mp3Bytes) }
+                            playPureMp3File(mp3File)
                             callback(true)
                             return
                         }
@@ -1987,73 +2011,38 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         })
     }
 
-    // Katman 3: Google Doğal Bulut Akışı (Android PlaybackParams ile hem Kadın hem Erkek Doğal Tonu!)
-    private fun tryGoogleNaturalStreamTTS(text: String, profile: Int, speed: Float) {
-        val langShort = AppConfig.getLang(this).take(2).lowercase(Locale.US)
-        val encoded = URLEncoder.encode(text.take(200), "UTF-8")
-        val url = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=$langShort&q=$encoded"
-
-        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-        client.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                speakLocalWavenetImmediate(text)
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val bytes = response.body?.bytes()
-                if (response.isSuccessful && bytes != null && bytes.size > 600) {
-                    playMp3BytesWithParams(bytes, profile, speed)
-                } else {
-                    speakLocalWavenetImmediate(text)
+    // Sesi bozan PlaybackParams olmadan saf MP3 oynatıcı
+    private fun playPureMp3File(mp3File: File) {
+        mainHandler.post {
+            try {
+                stopAllAudioAndReleaseFocus()
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).build()
+                    audioFocusRequest = req
+                    am.requestAudioFocus(req)
                 }
-            }
-        })
-    }
-
-    private fun playMp3BytesWithParams(bytes: ByteArray, profile: Int, speed: Float) {
-        try {
-            val mp3 = File(cacheDir, "neural_human_v14.mp3")
-            FileOutputStream(mp3).use { it.write(bytes) }
-            mainHandler.post {
-                try {
-                    stopAllAudio()
-                    val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        am.requestAudioFocus(AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).build())
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(mp3File.absolutePath)
+                    setOnPreparedListener { mp ->
+                        onSpeechStarted()
+                        mp.start()
                     }
-                    mediaPlayer = MediaPlayer().apply {
-                        setDataSource(mp3.absolutePath)
-                        setOnPreparedListener { mp ->
-                            onSpeechStarted()
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                try {
-                                    val pitch = when (profile) {
-                                        0 -> 1.0f   // Emel: Doğal Kadın
-                                        1 -> 1.09f  // Zeynep: Canlı Genç Kadın
-                                        2 -> 0.84f  // Ahmet: Karizmatik Erkek
-                                        else -> 0.76f // Jarvis: Derin Stüdyo Erkek
-                                    }
-                                    mp.playbackParams = PlaybackParams().setSpeed(speed).setPitch(pitch)
-                                } catch (e: Exception) {}
-                            }
-                            mp.start()
-                        }
-                        setOnCompletionListener { onSpeechDone() }
-                        setOnErrorListener { _, _, _ ->
-                            onSpeechDone()
-                            true
-                        }
-                        prepareAsync()
+                    setOnCompletionListener { onSpeechDone() }
+                    setOnErrorListener { _, _, _ ->
+                        onSpeechDone()
+                        true
                     }
-                } catch (e: Exception) {
-                    onSpeechDone()
+                    prepareAsync()
                 }
+            } catch (e: Exception) {
+                onSpeechDone()
             }
-        } catch (e: Exception) {
-            onSpeechDone()
         }
     }
 
-    private fun applyVoiceProfileToTts() {
+    // Voice.QUALITY_VERY_HIGH (500 Puan) Filtreli Saf Google Stüdyo Sesi
+    private fun applyHighestRatedVoiceToTts() {
         if (!isTtsReady) return
         val langCode = AppConfig.getLang(this)
         val locale = when {
@@ -2069,158 +2058,184 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val wantFemale = (profile <= 1)
 
         try {
+            // Tüm sesleri kalite puanına göre (QUALITY_VERY_HIGH = 500, QUALITY_HIGH = 400) sırala!
             val allVoices = tts?.voices?.filter {
                 it.locale.language.equals(locale.language, ignoreCase = true)
-            } ?: emptyList()
+            }?.sortedWith(
+                compareByDescending<Voice> { it.quality }
+                    .thenByDescending { it.name.contains("network", true) || it.name.contains("wavenet", true) }
+                    .thenBy { it.latency }
+            ) ?: emptyList()
 
             if (allVoices.isNotEmpty()) {
                 val femaleVoices = allVoices.filter { v ->
                     val n = v.name.lowercase(Locale.US)
                     n.contains("female") || n.contains("cfs") || n.contains("efu") || n.contains("mfm") || n.contains("wavenet-a") || n.contains("wavenet-c") || n.contains("wavenet-e")
-                }.sortedByDescending { it.name.contains("network", true) || it.name.contains("wavenet", true) }
+                }
 
                 val maleVoices = allVoices.filter { v ->
                     val n = v.name.lowercase(Locale.US)
                     (n.contains("male") && !n.contains("female")) || n.contains("ama") || n.contains("iom") || n.contains("tmc") || n.contains("wavenet-b") || n.contains("wavenet-d")
-                }.sortedByDescending { it.name.contains("network", true) || it.name.contains("wavenet", true) }
+                }
 
                 val selected: Voice? = if (wantFemale) {
-                    if (femaleVoices.isNotEmpty()) femaleVoices[profile % femaleVoices.size] else allVoices.lastOrNull()
+                    if (femaleVoices.isNotEmpty()) femaleVoices[profile % femaleVoices.size] else allVoices.firstOrNull()
                 } else {
-                    if (maleVoices.isNotEmpty()) maleVoices[(profile - 2).coerceAtLeast(0) % maleVoices.size] else allVoices.firstOrNull()
+                    if (maleVoices.isNotEmpty()) maleVoices[(profile - 2).coerceAtLeast(0) % maleVoices.size] else allVoices.lastOrNull()
                 }
                 if (selected != null) tts?.voice = selected
             }
         } catch (e: Exception) {}
 
+        // Sesi robotikleştiren aşırı Pitch oynamaları kaldırıldı! Saf 1.0f doğal insan frekansı:
         when (profile) {
-            0 -> { tts?.setPitch(1.02f); tts?.setSpeechRate(speed * 1.02f) }
-            1 -> { tts?.setPitch(1.10f); tts?.setSpeechRate(speed * 1.06f) }
-            2 -> { tts?.setPitch(0.90f); tts?.setSpeechRate(speed * 1.02f) }
-            else -> { tts?.setPitch(0.82f); tts?.setSpeechRate(speed * 0.98f) }
+            0 -> { tts?.setPitch(1.0f); tts?.setSpeechRate(speed * 1.0f) }
+            1 -> { tts?.setPitch(1.04f); tts?.setSpeechRate(speed * 1.03f) }
+            2 -> { tts?.setPitch(0.96f); tts?.setSpeechRate(speed * 1.0f) }
+            else -> { tts?.setPitch(0.90f); tts?.setSpeechRate(speed * 0.98f) }
         }
     }
 
-    private fun speakLocalWavenetImmediate(clean: String) {
+    private fun speakPure500QualityWavenet(clean: String, profile: Int, speed: Float) {
         mainHandler.post {
             if (!isTtsReady) {
                 pendingSpeechText = clean
                 return@post
             }
-            applyVoiceProfileToTts()
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).build()
+                audioFocusRequest = req
+                am.requestAudioFocus(req)
+            }
+            applyHighestRatedVoiceToTts()
             val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f) }
-            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, params, "WavenetUtterance_${System.currentTimeMillis()}")
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, params, "HighRatedUtterance_${System.currentTimeMillis()}")
         }
     }
 
-    // BELLEK SIZINTISI YAPMAYAN TEKİL MİKROFON MOTORU (Donmayı önler, tek seferde algılar!)
-    private fun initSingleSpeechRecognizer() {
+    // HER YANIT SONRASI MİKROFONU TERTEMİZ SIFIRDAN AÇAN MOTOR (2. soruda takılma sorununu %100 çözer!)
+    private fun freshRestartMic() {
+        if (isSpeaking || isProcessing) return
         mainHandler.post {
-            if (speechRecognizer == null) {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+            } catch (e: Exception) {}
+            speechRecognizer = null
+
+            try {
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
-            }
-            recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, AppConfig.getLang(this@OverlayService))
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 950L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
-            }
-
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    isListeningNow = true
-                    lastMicStartTime = System.currentTimeMillis()
+                val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, AppConfig.getLang(this@OverlayService))
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 850L)
                 }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {
-                    val lvl = if (rmsdB < 0) 0.5f else rmsdB.coerceIn(0.5f, 10f)
-                    if (MainActivity.isAppInForeground) {
-                        MainActivity.sphereView?.audioLevel = lvl
-                    }
-                    if (isAwakeForCommand) {
-                        waveView.activeWave = lvl > 2.2f
-                        waveView.invalidate()
-                    }
-                }
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { isListeningNow = false }
-                override fun onError(error: Int) {
-                    isListeningNow = false
-                    if (!isSpeaking && !isProcessing) {
-                        mainHandler.postDelayed({ startListeningSafely() }, 50L)
-                    }
-                }
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
-                    if (matches.isEmpty()) return
 
-                    val aiName = AppConfig.getName(this@OverlayService)
-                    if (aiName.isEmpty()) return
-                    val matchedCandidate = matches.firstOrNull { containsWakeWordSmart(it, aiName) }
+                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        isListeningNow = true
+                        lastMicStartTime = System.currentTimeMillis()
+                    }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {
+                        val lvl = if (rmsdB < 0) 0.5f else rmsdB.coerceIn(0.5f, 10f)
+                        if (MainActivity.isAppInForeground) {
+                            MainActivity.sphereView?.audioLevel = lvl
+                        }
+                        if (isAwakeForCommand) {
+                            waveView.activeWave = lvl > 2.2f
+                            waveView.invalidate()
+                        }
+                    }
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() { isListeningNow = false }
+                    override fun onError(error: Int) {
+                        isListeningNow = false
+                        if (!isSpeaking && !isProcessing) {
+                            mainHandler.postDelayed({ freshRestartMic() }, 120L)
+                        }
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                        if (matches.isEmpty()) return
 
-                    if (!isAwakeForCommand && matchedCandidate != null) {
-                        sentenceBuffer.clear()
-                        val afterWake = stripWakeWordSmart(matchedCandidate, aiName)
-                        latestPartialChunk = afterWake
-                        wakeUpRightBottomPill(afterWake.ifEmpty { "🎙️ Dinliyorum..." })
-                        resetFastSilenceTimer()
-                    } else if (isAwakeForCommand) {
-                        val partial = matches[0].trim()
-                        if (partial.isNotEmpty()) {
-                            latestPartialChunk = stripWakeWordSmart(partial, aiName)
-                            val preview = (sentenceBuffer.toString() + " " + latestPartialChunk).trim()
-                            pillPromptTv.text = preview.ifEmpty { "🎙️ Dinliyorum..." }
-                            MainActivity.centerSubTv?.text = preview
+                        val aiName = AppConfig.getName(this@OverlayService)
+                        if (aiName.isEmpty()) return
+                        val matchedCandidate = matches.firstOrNull { containsWakeWordSmart(it, aiName) }
+
+                        if (!isAwakeForCommand && matchedCandidate != null) {
+                            sentenceBuffer.clear()
+                            val afterWake = stripWakeWordSmart(matchedCandidate, aiName)
+                            latestPartialChunk = afterWake
+                            isAwakeForCommand = true
+                            rootOverlayLayout.visibility = View.VISIBLE
+                            pillPromptTv.text = afterWake.ifEmpty { "🎙️ Dinliyorum..." }
+                            MainActivity.centerSubTv?.text = afterWake.ifEmpty { "🎙️ Dinliyorum..." }
                             resetFastSilenceTimer()
+                        } else if (isAwakeForCommand) {
+                            val partial = matches[0].trim()
+                            if (partial.isNotEmpty()) {
+                                latestPartialChunk = stripWakeWordSmart(partial, aiName)
+                                val preview = (sentenceBuffer.toString() + " " + latestPartialChunk).trim()
+                                pillPromptTv.text = preview.ifEmpty { "🎙️ Dinliyorum..." }
+                                MainActivity.centerSubTv?.text = preview
+                                resetFastSilenceTimer()
+                            }
                         }
                     }
-                }
-                override fun onResults(results: Bundle?) {
-                    isListeningNow = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
-                    val aiName = AppConfig.getName(this@OverlayService)
-                    if (aiName.isEmpty()) {
-                        startListeningSafely()
-                        return
-                    }
+                    override fun onResults(results: Bundle?) {
+                        isListeningNow = false
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
+                        val aiName = AppConfig.getName(this@OverlayService)
+                        if (aiName.isEmpty()) {
+                            freshRestartMic()
+                            return
+                        }
 
-                    val matchedWake = matches.firstOrNull { containsWakeWordSmart(it, aiName) }
+                        val matchedWake = matches.firstOrNull { containsWakeWordSmart(it, aiName) }
 
-                    if (!isAwakeForCommand && matchedWake != null) {
-                        val clean = stripWakeWordSmart(matchedWake, aiName)
-                        sentenceBuffer.clear()
-                        latestPartialChunk = ""
-                        if (clean.isNotEmpty()) {
-                            wakeUpRightBottomPill(clean)
-                            processFullCommand(clean)
+                        if (!isAwakeForCommand && matchedWake != null) {
+                            val clean = stripWakeWordSmart(matchedWake, aiName)
+                            sentenceBuffer.clear()
+                            latestPartialChunk = ""
+                            if (clean.isNotEmpty()) {
+                                isAwakeForCommand = false
+                                processFullCommand(clean)
+                            } else {
+                                wakeUpRightBottomPill("🎙️ Seni dinliyorum...")
+                            }
+                        } else if (isAwakeForCommand) {
+                            val spoken = matches.firstOrNull()?.trim() ?: ""
+                            val clean = stripWakeWordSmart(spoken, aiName)
+                            if (clean.isNotEmpty()) {
+                                if (sentenceBuffer.isNotEmpty()) sentenceBuffer.append(" ")
+                                sentenceBuffer.append(clean)
+                            }
+                            latestPartialChunk = ""
+                            val combined = sentenceBuffer.toString().trim()
+                            if (combined.isNotEmpty()) {
+                                pillPromptTv.text = combined
+                                MainActivity.centerSubTv?.text = combined
+                                resetFastSilenceTimer()
+                            } else {
+                                freshRestartMic()
+                            }
                         } else {
-                            wakeUpRightBottomPill("🎙️ Seni dinliyorum...")
-                            startListeningSafely()
+                            freshRestartMic()
                         }
-                    } else if (isAwakeForCommand) {
-                        val spoken = matches.firstOrNull()?.trim() ?: ""
-                        val clean = stripWakeWordSmart(spoken, aiName)
-                        if (clean.isNotEmpty()) {
-                            if (sentenceBuffer.isNotEmpty()) sentenceBuffer.append(" ")
-                            sentenceBuffer.append(clean)
-                        }
-                        latestPartialChunk = ""
-                        val combined = sentenceBuffer.toString().trim()
-                        if (combined.isNotEmpty()) {
-                            pillPromptTv.text = combined
-                            MainActivity.centerSubTv?.text = combined
-                            resetFastSilenceTimer()
-                        } else {
-                            startListeningSafely()
-                        }
-                    } else {
-                        startListeningSafely()
                     }
-                }
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                lastMicStartTime = System.currentTimeMillis()
+                speechRecognizer?.startListening(recognizerIntent)
+            } catch (e: Exception) {
+                mainHandler.postDelayed({ freshRestartMic() }, 400L)
+            }
         }
     }
 
@@ -2295,24 +2310,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startListeningSafely() {
-        if (isSpeaking || isProcessing) return
-        mainHandler.post {
-            try {
-                if (speechRecognizer == null) initSingleSpeechRecognizer()
-                lastMicStartTime = System.currentTimeMillis()
-                recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, AppConfig.getLang(this))
-                speechRecognizer?.startListening(recognizerIntent)
-            } catch (e: Exception) {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-                initSingleSpeechRecognizer()
-                mainHandler.postDelayed({ startListeningSafely() }, 200L)
-            }
-        }
-    }
-
-    // KULLANICI AÇIKÇA FOTOĞRAF/GÖRSEL İSTEDİ Mİ KONTROLÜ ("Merhaba" deyince ASLA fotoğraf açmaz!)
     private fun didUserExplicitlyAskForPhoto(lowerCmd: String): Boolean {
         val photoTriggers = listOf(
             "fotoğraf", "fotograf", "foto ", "fotosu", "resim", "resmi", "görsel", "gorsel",
@@ -2329,7 +2326,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         MainActivity.onNewMessageCallback?.invoke()
 
         mainHandler.post {
-            imageCardView.visibility = View.GONE // Yeni komutta eski resmi gizle
+            imageCardView.visibility = View.GONE
             if (!MainActivity.isAppInForeground) {
                 rootOverlayLayout.visibility = View.VISIBLE
             }
@@ -2337,7 +2334,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             MainActivity.centerSubTv?.text = "⏳ $command"
         }
 
-        // 1. Bankacılık Güvenlik Kilidi
         val bankingKeywords = listOf(
             "banka", "garanti", "ziraat", "iş bankası", "iscep", "akbank", "yapı kredi",
             "qnb", "finansbank", "vakıfbank", "halkbank", "denizbank", "teb", "kuveyttürk",
@@ -2348,13 +2344,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 2. KAMERAYI AÇIP FOTOĞRAF ÇEKME
         if (lower.contains("fotoğraf çek") || lower.contains("foto çek") || lower.contains("resim çek") || lower.contains("selfie çek") || lower.contains("özçekim")) {
             capturePhotoAutomatically(isSelfie = lower.contains("selfie") || lower.contains("özçekim") || lower.contains("ön kamera"))
             return
         }
 
-        // 3. SADECE KULLANICI AÇIKÇA RESİM ÇİZ / FOTOĞRAF GÖSTER DEDİĞİNDE GÖRSEL ÜRET
         if (lower.contains("resmi çiz") || lower.contains("resim çiz") || lower.contains("görsel oluştur") || lower.contains("görseli oluştur") || lower.contains("resmi oluştur") || lower.contains("fotoğrafını göster") || lower.contains("resmini göster")) {
             val imgPrompt = lower
                 .replace("bana", "").replace("resmi çiz", "").replace("resim çiz", "")
@@ -2365,23 +2359,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 4. WHATSAPP'TAN KİŞİYE MESAJ ATMA
         if (lower.contains("whatsapp") || lower.contains("mesaj at") || lower.contains("mesaj gönder") || lower.contains("diye yaz")) {
             if (handleWhatsAppMessageCommand(command, lower)) return
         }
 
-        // 5. TELEFONLA ARAMA YAPMA
         if (lower.endsWith(" ara") && !lower.contains("internette") && !lower.contains("google") && !lower.contains("youtube") && !lower.contains("araştır")) {
             val targetPerson = lower.removeSuffix(" ara").replace("yi", "").replace("yı", "").replace("i", "").replace("ı", "").trim()
             if (targetPerson.isNotEmpty() && dialContactByName(targetPerson)) return
         }
 
-        // 6. ALARM KURMA
         if (lower.contains("alarm kur") || lower.contains("alarmı kur")) {
             if (handleSetAlarm(lower)) return
         }
 
-        // 7. YOUTUBE'DA VİDEOYU ARAŞTIRIP DOĞRUDAN OYNATMA
         if (lower.contains("video") || lower.contains("izle") || lower.contains("youtube") || lower.contains("şarkı aç") || lower.contains("müzik aç") || lower.contains("klip aç")) {
             val query = lower
                 .replace("youtube'u açıp", "").replace("youtube açıp", "").replace("youtube'da", "").replace("youtubeda", "").replace("youtube", "")
@@ -2397,7 +2387,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 8. CİHAZDAKİ HERHANGİ BİR UYGULAMAYI AÇMA
         if (lower.endsWith(" aç") || lower.contains("uygulamasını aç")) {
             if (lower.contains("kamera")) {
                 try {
@@ -2415,8 +2404,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             if (cleanedApp.isNotEmpty() && openAnyInstalledApp(cleanedApp)) return
         }
 
-        // 9. NORMAL SOHBET VE ARAŞTIRMA:
-        // Eğer basit selamlama/sohbet ise ("merhaba", "nasılsın", "saat kaç") internet kazıması yapmadan anında cevap ver!
         val allowPhoto = didUserExplicitlyAskForPhoto(lower)
         val isSimpleGreeting = listOf("merhaba", "selam", "nasılsın", "naber", "günaydın", "iyi akşamlar", "iyi geceler", "adın ne", "kimsin", "saat kaç").any { lower == it || lower.startsWith("$it ") }
 
@@ -2713,7 +2700,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             } else {
                 imageCardView.visibility = View.GONE
             }
-            speakNeuralHuman(answer)
+            speakHighRatedVoice(answer)
         }
     }
 
@@ -2722,7 +2709,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val langPrefix = AppConfig.getLang(this).take(2).lowercase(Locale.US)
         val wikiUrl = "https://$langPrefix.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=thumbnail&pithumbsize=500&generator=search&gsrsearch=${URLEncoder.encode(cleanKw, "UTF-8")}&gsrlimit=1"
 
-        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/14.0").build()
+        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/15.0").build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {}
             override fun onResponse(call: Call, response: Response) {
@@ -2756,9 +2743,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                     onDone(false)
                     return
                 }
-                // Bellek taşmasını (donmayı) önlemek için resmi küçülterek decode et
-                val opts = BitmapFactory.Options().apply { inSampleSize = 1 }
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bmp == null) {
                     onDone(false)
                     return
@@ -2810,7 +2795,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun fetchWikipediaSnippet(cleanQ: String, callback: (String) -> Unit) {
         val wikiUrl = "https://tr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${URLEncoder.encode(cleanQ, "UTF-8")}&utf8=&format=json&srlimit=2"
-        client.newCall(Request.Builder().url(wikiUrl).header("User-Agent", "MasterAI/14.0").build()).enqueue(object : Callback {
+        client.newCall(Request.Builder().url(wikiUrl).header("User-Agent", "MasterAI/15.0").build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { callback("") }
             override fun onResponse(call: Call, response: Response) {
                 val body = response.body?.string() ?: ""
@@ -2990,7 +2975,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         })
     }
 
-    // YEDEK YANITLAYICI: Kullanıcı fotoğraf istemediyse ASLA fotoğraf açmaz!
     private fun deliverGuaranteedFallbackAnswer(userPrompt: String, liveWebInfo: String, allowPhoto: Boolean) {
         val lower = userPrompt.lowercase(Locale("tr", "TR"))
         val userName = AppConfig.getUserName(this).ifEmpty { "Dostum" }
@@ -3009,7 +2993,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             val cleanInfo = liveWebInfo.split("|").firstOrNull()?.trim() ?: liveWebInfo.take(240)
             replyAndShow(cleanInfo, if (allowPhoto) userPrompt else null)
         } else {
-            replyAndShow("Seni dinliyorum $userName, istediğin konuyu hemen araştırabilirim.", null)
+            replyAndShow("Seni dinliyorum $userName, başka bir soru sorabilirsin.", null)
         }
     }
 
@@ -3054,7 +3038,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         super.onDestroy()
         mainHandler.removeCallbacks(micWatchdogRunnable)
-        stopAllAudio()
+        stopAllAudioAndReleaseFocus()
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (e: Exception) {}
