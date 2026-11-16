@@ -6,13 +6,14 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.SearchManager
 import android.app.Service
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -21,13 +22,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
@@ -37,6 +41,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -56,6 +61,7 @@ import android.util.Base64
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -89,6 +95,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
@@ -100,8 +107,40 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object AppConfig {
-    const val PREFS = "AssistantUltimateV16Prefs"
+    const val PREFS = "AssistantBixbyV17Prefs"
     const val DEFAULT_KEY = "AQ.Ab8RN6KZYPqSekpNWFEnuG42klSAK_TKxGeFNc1YbcduzUm0kA"
+
+    val VOICE_LIST = listOf(
+        Triple(0, "alloy", "👩  Claude Alloy — Sıcak & Doğal Kadın"),
+        Triple(1, "coral", "👩‍💼  Claude Coral — Akıcı & Samimi Kadın"),
+        Triple(2, "nova", "👩  Claude Nova — Enerjik & Net Kadın"),
+        Triple(3, "shimmer", "👩‍🎤  Claude Shimmer — Berrak Stüdyo Kadın"),
+        Triple(4, "ballad", "🎭  Claude Ballad — Duygusal & Hikayeci Ton"),
+        Triple(5, "ash", "👨  Claude Ash — Doğal & Zeki Erkek"),
+        Triple(6, "sage", "🧔  Claude Sage — Bilge & Sakin Jarvis Erkek"),
+        Triple(7, "verse", "🎙️  Claude Verse — Dinamik Spiker Erkek"),
+        Triple(8, "onyx", "👨  Claude Onyx — Karizmatik & Tok Erkek"),
+        Triple(9, "echo", "🧔  Claude Echo — Yumuşak Stüdyo Erkek")
+    )
+
+    val LANG_LIST = listOf(
+        "tr-TR" to "🇹🇷  Türkçe",
+        "en-US" to "🇺🇸  English (İngilizce)",
+        "ar-SA" to "🇸🇦  العربية (Arapça)",
+        "ru-RU" to "🇷🇺  Русский (Rusça)"
+    )
+
+    val MODEL_LIST = listOf(
+        Triple("HYDROGEN", "🔥 Hydrogen Ultra (GPT-4o & Gemini 2.5)", "En yüksek zeka, canlı web araştırması ve tam cihaz kontrolü"),
+        Triple("ARGON", "💎 Argon Pro (Claude & DeepSeek R1 Mantık)", "Derin analitik düşünme, kodlama ve detaylı problem çözme"),
+        Triple("3.2_FLASH", "⚡ 3.2 Flash Hız Motoru", "0.4 saniye ultra hızlı yanıt ve anında komut yürütme")
+    )
+
+    val SPEED_LIST = listOf(
+        1.0f to "Normal (1.0x Doğal Akış)",
+        1.2f to "Hızlı (1.2x Seri Konuşma)",
+        1.4f to "Turbo (1.4x Maksimum Hız)"
+    )
 
     fun isSetupDone(ctx: Context): Boolean =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("SETUP_DONE", false)
@@ -139,10 +178,8 @@ object AppConfig {
     fun setSpeed(ctx: Context, speed: Float) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("SPEED", speed).apply()
 
-    // 0..3: 4 Kadın Sesi (Claude Alloy, Nova, Shimmer, Coral)
-    // 4..7: 4 Erkek Sesi (Claude Ash, Onyx, Echo, Sage)
     fun getVoiceProfile(ctx: Context): Int =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("VOICE_PROFILE", 4)
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("VOICE_PROFILE", 5)
 
     fun setVoiceProfile(ctx: Context, idx: Int) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("VOICE_PROFILE", idx).apply()
@@ -159,27 +196,33 @@ object AppConfig {
     fun setModelChoice(ctx: Context, model: String) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("MODEL_CHOICE", model).apply()
 
-    // AÇIK / KARANLIK TEMA DESTEĞİ
     fun isDarkTheme(ctx: Context): Boolean =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("DARK_THEME", true)
 
     fun setDarkTheme(ctx: Context, dark: Boolean) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("DARK_THEME", dark).apply()
 
-    // ORTADAKİ KÜRENİN VE VURGULARIN RENK PALETİ
     fun getSphereColor(ctx: Context): Int =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("SPHERE_COLOR", Color.WHITE)
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("SPHERE_COLOR", Color.parseColor("#38BDF8"))
 
     fun setSphereColor(ctx: Context, color: Int) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("SPHERE_COLOR", color).apply()
 
+    // BULUT HESAP EŞİTLEME (Cloud Account Sync)
+    fun getAccountEmail(ctx: Context): String =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("SYNC_ACCOUNT", "")?.trim() ?: ""
+
+    fun setAccountEmail(ctx: Context, email: String) =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("SYNC_ACCOUNT", email.trim().lowercase(Locale.US)).apply()
+
     fun getConversations(ctx: Context): JSONArray {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V16", "[]") ?: "[]"
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("CONVERSATIONS_V17", "[]") ?: "[]"
         return try { JSONArray(raw) } catch (e: Exception) { JSONArray() }
     }
 
-    private fun saveConversations(ctx: Context, arr: JSONArray) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V16", arr.toString()).apply()
+    fun saveConversations(ctx: Context, arr: JSONArray) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("CONVERSATIONS_V17", arr.toString()).apply()
+        CloudSyncManager.pushToCloudIfConnected(ctx, arr)
     }
 
     fun getCurrentSessionId(ctx: Context): String {
@@ -226,7 +269,7 @@ object AppConfig {
         return JSONArray()
     }
 
-    fun addMessageToCurrentSession(ctx: Context, role: String, text: String) {
+    fun addMessageToCurrentSession(ctx: Context, role: String, text: String, imageUrl: String? = null) {
         val sessionId = getCurrentSessionId(ctx)
         val convs = getConversations(ctx)
         for (i in 0 until convs.length()) {
@@ -236,6 +279,7 @@ object AppConfig {
                 msgs.put(JSONObject().apply {
                     put("role", role)
                     put("text", text)
+                    if (!imageUrl.isNullOrBlank()) put("imageUrl", imageUrl)
                     put("time", System.currentTimeMillis())
                 })
                 c.put("messages", msgs)
@@ -267,7 +311,65 @@ object AppConfig {
     }
 }
 
-// OTONOM SERVİS: Kamera Deklanşörü, WhatsApp Gönder ve Uygulama İçi Otomatik Metin Yazma ("... açıp ... yaz")
+// TELEFON VE TABLET ARASINDA SOHBET GEÇMİŞİNİ EŞİTLEYEN BULUT SENKRONİZASYON MOTORU
+object CloudSyncManager {
+    private val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build()
+
+    private fun getBucketUrl(accountKey: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val hash = md.digest("AsistanSyncV17_$accountKey".toByteArray())
+            .joinToString("") { "%02x".format(it) }.take(28)
+        return "https://kvdb.io/A2x9kL5mP8qR3vW7yB1n/$hash"
+    }
+
+    fun pushToCloudIfConnected(ctx: Context, conversations: JSONArray) {
+        val acc = AppConfig.getAccountEmail(ctx)
+        if (acc.isEmpty()) return
+        val url = getBucketUrl(acc)
+        val req = Request.Builder()
+            .url(url)
+            .post(conversations.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+            override fun onResponse(call: Call, response: Response) { response.close() }
+        })
+    }
+
+    fun pullFromCloud(ctx: Context, onComplete: (Boolean) -> Unit) {
+        val acc = AppConfig.getAccountEmail(ctx)
+        if (acc.isEmpty()) {
+            onComplete(false)
+            return
+        }
+        val url = getBucketUrl(acc)
+        val req = Request.Builder().url(url).get().build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Handler(Looper.getMainLooper()).post { onComplete(false) }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful && body.trim().startsWith("[")) {
+                    try {
+                        val cloudArr = JSONArray(body)
+                        if (cloudArr.length() > 0) {
+                            ctx.getSharedPreferences(AppConfig.PREFS, Context.MODE_PRIVATE)
+                                .edit().putString("CONVERSATIONS_V17", cloudArr.toString()).apply()
+                            AppConfig.setCurrentSessionId(ctx, cloudArr.getJSONObject(0).getString("id"))
+                            Handler(Looper.getMainLooper()).post { onComplete(true) }
+                            return
+                        }
+                    } catch (e: Exception) {}
+                }
+                // Eğer bulutta henüz veri yoksa mevcut cihazın verisini buluta yükle
+                pushToCloudIfConnected(ctx, AppConfig.getConversations(ctx))
+                Handler(Looper.getMainLooper()).post { onComplete(true) }
+            }
+        })
+    }
+}
+
 class AsistanOtonomService : AccessibilityService() {
     companion object {
         var instance: AsistanOtonomService? = null
@@ -405,7 +507,6 @@ class AsistanOtonomService : AccessibilityService() {
     }
 }
 
-// ÖZEL ÇİZİM MODERN VEKTÖR İKONLAR (Kötü Emojiler Yerine Keskin Çizim Simgeler)
 class VectorIconView(context: Context, private val iconType: String, var iconColor: Int = Color.WHITE) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = iconColor
@@ -420,15 +521,10 @@ class VectorIconView(context: Context, private val iconType: String, var iconCol
     }
     private val rect = RectF()
 
-    fun updateColor(newColor: Int) {
-        iconColor = newColor
-        paint.color = newColor
-        fillPaint.color = newColor
-        invalidate()
-    }
-
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        paint.color = iconColor
+        fillPaint.color = iconColor
         val cx = width / 2f
         val cy = height / 2f
         val r = width.coerceAtMost(height) * 0.34f
@@ -480,7 +576,48 @@ class VectorIconView(context: Context, private val iconType: String, var iconCol
     }
 }
 
-// RENK PALETİ DESTEKLİ 3D KÜRE (İstediğin Renkte Parlar)
+// SAMSUNG BIXBY TARZI CANLI RENKLİ AKIŞKAN KÜRE İKONU (Sağ Alt Kapsülün Solundaki Canlı Çekirdek)
+class BixbyOrbIconView(context: Context, var mainColor: Int = Color.parseColor("#38BDF8")) : View(context) {
+    var isAnimating = false
+    var audioAmp = 0f
+    private var phase = 0f
+    private val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val cx = width / 2f
+        val cy = height / 2f
+        val maxR = (width.coerceAtMost(height) / 2f) - 4f
+
+        phase += if (isAnimating) 0.14f else 0.04f
+        val pulse = if (isAnimating) (sin(phase) * 4f + (audioAmp * 1.2f)).coerceIn(-3f, 8f) else 0f
+        val r = (maxR * 0.76f + pulse).coerceAtMost(maxR)
+
+        val red = Color.red(mainColor)
+        val green = Color.green(mainColor)
+        val blue = Color.blue(mainColor)
+        val lightCol = Color.argb(255, min(255, red + 75), min(255, green + 75), min(255, blue + 75))
+        val darkCol = Color.argb(255, (red * 0.45f).toInt(), (green * 0.45f).toInt(), (blue * 0.45f).toInt())
+
+        orbPaint.shader = RadialGradient(
+            cx - r * 0.3f, cy - r * 0.3f, r * 1.3f,
+            intArrayOf(Color.WHITE, lightCol, mainColor, darkCol),
+            floatArrayOf(0f, 0.25f, 0.7f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawCircle(cx, cy, r, orbPaint)
+
+        ringPaint.color = Color.argb(140, red, green, blue)
+        canvas.drawCircle(cx, cy, (r + 5f).coerceAtMost(maxR), ringPaint)
+
+        if (isShown) postInvalidateDelayed(40L)
+    }
+}
+
 class ParticleSphereView(context: Context) : View(context) {
     var audioLevel = 0f
     var isActive = false
@@ -559,6 +696,10 @@ class GeminiMicButtonView(context: Context, var accentColor: Int = Color.WHITE) 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         bgPaint.color = accentColor
+        val iconCol = if (Color.luminance(accentColor) > 0.5f) Color.parseColor("#111111") else Color.WHITE
+        micFillPaint.color = iconCol
+        micStrokePaint.color = iconCol
+
         val cx = width / 2f
         val cy = height / 2f
         val r = (width.coerceAtMost(height) / 2f) - 2f
@@ -609,14 +750,14 @@ class MainActivity : AppCompatActivity() {
         var sphereView: ParticleSphereView? = null
         var centerSubTv: TextView? = null
         var isAppInForeground = false
+        var isChatScreenOpen = false
         var onNewMessageCallback: (() -> Unit)? = null
         private const val REQ_PICK_ICON = 701
 
-        // 12 Renklik Canlı Küre ve Vurgu Paleti
         val COLOR_PALETTE = listOf(
+            "Bixby Mavi" to Color.parseColor("#38BDF8"),
             "Saf Beyaz" to Color.parseColor("#FFFFFF"),
             "Altın Sarısı" to Color.parseColor("#FBBF24"),
-            "Siber Mavi" to Color.parseColor("#38BDF8"),
             "Zümrüt Yeşili" to Color.parseColor("#34D399"),
             "Claude Turuncu" to Color.parseColor("#D97757"),
             "Neon Mor" to Color.parseColor("#A855F7"),
@@ -630,6 +771,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var rootContainer: FrameLayout
+    private val imageHttpClient = OkHttpClient()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -675,6 +817,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         isAppInForeground = false
+        isChatScreenOpen = false
         if (AppConfig.isSetupDone(this)) {
             startAssistantService("APP_BACKGROUND")
         }
@@ -698,7 +841,7 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         } else if (!overlayGranted) {
-            showPermissionGate("Ekran Üstü İzni Gerekli", "Asistanın diğer uygulamaların üzerinde (sağ altta) görünebilmesi için bu izni vermelisiniz.") {
+            showPermissionGate("Ekran Üstü İzni Gerekli", "Asistanın diğer uygulamaların üzerinde (Bixby kapsülü olarak) görünebilmesi için bu izni vermelisiniz.") {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
         } else {
@@ -765,6 +908,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showOnboardingScreen() {
+        isChatScreenOpen = false
         rootContainer.removeAllViews()
         val scroll = ScrollView(this).apply { isFillViewport = true }
         val col = LinearLayout(this).apply {
@@ -871,8 +1015,8 @@ class MainActivity : AppCompatActivity() {
         rootContainer.addView(scroll)
     }
 
-    // KUSURSUZ ANA EKRAN: Açık/Karanlık Tema + Renk Paleti + Özel Vektör İkonlar
     private fun showMinimalistHome() {
+        isChatScreenOpen = false
         onNewMessageCallback = null
         applyThemeBackground()
         rootContainer.removeAllViews()
@@ -891,7 +1035,6 @@ class MainActivity : AppCompatActivity() {
 
         val mainFrame = FrameLayout(this).apply { setBackgroundColor(bgColor) }
 
-        // ÜST BAR (Keskin Vektör Simgelerle)
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -929,7 +1072,6 @@ class MainActivity : AppCompatActivity() {
         topBar.addView(keyIconBtn)
         topBar.addView(settingsIconBtn)
 
-        // ORTA BÖLÜM: Özel Renkli 3D Noktalı Küre
         val centerCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -983,7 +1125,6 @@ class MainActivity : AppCompatActivity() {
         centerCol.addView(greetingLabel)
         centerCol.addView(subLabel)
 
-        // ALT BÖLÜM: Hızlı Renk Seçici + "Yaz" Kapsülü + Alt Navigasyon
         val bottomWrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -991,7 +1132,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val writePillBtn = TextView(this).apply {
-            text = "Mesaj Yaz veya Soru Sor..."
+            text = "Sohbet & Görsel Üretim Ekranını Aç..."
             textSize = 14f
             setTextColor(primaryText)
             gravity = Gravity.CENTER
@@ -1020,7 +1161,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun navTab(iconType: String, label: String, active: Boolean, onClick: () -> Unit): View {
-            val tabColor = if (active) primaryText else secondaryText
+            val tabColor = if (active) effectiveSphereColor else secondaryText
             return LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -1057,8 +1198,9 @@ class MainActivity : AppCompatActivity() {
         rootContainer.addView(mainFrame)
     }
 
-    // CHATGPT & GEMİNİ TARZI MODERN SOHBET EKRANI (Öneri Kartları + Çoklu Geçmiş + Kopyalama)
+    // SOHBET EKRANI: Sağ Alttaki Bar Burada ASLA Açılmaz + Üretilen Resimler Sohbet İçinde Görünür ve Tıklanınca Tam Ekran Olur!
     private fun showGeminiChatScreen(focusKeyboard: Boolean) {
+        isChatScreenOpen = true
         sphereView = null
         startAssistantService("HIDE_PILL")
         applyThemeBackground()
@@ -1118,7 +1260,7 @@ class MainActivity : AppCompatActivity() {
             val arr = AppConfig.getMessagesForSession(this, sessionId)
 
             if (arr.length() == 0) {
-                val emptyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(30, 110, 30, 40) }
+                val emptyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(30, 100, 30, 40) }
                 val greet = TextView(this).apply {
                     text = "Merhaba, ${AppConfig.getUserName(this@MainActivity).ifEmpty { "Dostum" }}"
                     textSize = 28f
@@ -1127,21 +1269,20 @@ class MainActivity : AppCompatActivity() {
                     gravity = Gravity.CENTER
                 }
                 val sub = TextView(this).apply {
-                    text = "Bugün birlikte ne yapalım?"
-                    textSize = 16f
+                    text = "Sohbet edebilir, gerçekçi görsel üretebilir veya navigasyon başlatabilirsin."
+                    textSize = 15f
                     setTextColor(secondaryText)
                     gravity = Gravity.CENTER
-                    setPadding(0, 10, 0, 45)
+                    setPadding(0, 10, 0, 40)
                 }
                 emptyBox.addView(greet)
                 emptyBox.addView(sub)
 
-                // ChatGPT / Gemini Tarzı Hızlı Öneri Hapları
                 val suggestions = listOf(
+                    "🗺️ Gaziantep'e yol tarifi al",
+                    "🎨 Gerçekçi bir spor araba resmi çiz",
                     "🌐 Google'ı açıp EBA yaz",
-                    "🎬 YouTube'da MrBeast videosu aç",
-                    "🎨 Uzayda yürüyen kedi resmi çiz",
-                    "📸 Kamerayı açıp fotoğraf çek"
+                    "🎬 YouTube'da MrBeast videosu aç"
                 )
                 for (sug in suggestions) {
                     val chip = TextView(this).apply {
@@ -1170,6 +1311,7 @@ class MainActivity : AppCompatActivity() {
                     val obj = arr.getJSONObject(i)
                     val isUser = obj.getString("role") == "user"
                     val msgText = obj.getString("text")
+                    val imgUrl = obj.optString("imageUrl", "")
 
                     val row = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
@@ -1191,17 +1333,21 @@ class MainActivity : AppCompatActivity() {
                         row.addView(senderLb)
                     }
 
-                    val bubble = TextView(this).apply {
-                        text = msgText
-                        textSize = 15f
-                        setTextColor(if (isUser) userBubbleText else primaryText)
-                        setPadding(42, 28, 42, 28)
+                    val bubbleBox = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(40, 26, 40, 26)
                         background = GradientDrawable().apply {
                             cornerRadius = 38f
                             setColor(if (isUser) userBubbleBg else aiBubbleBg)
                             if (!isUser) setStroke(2, borderCol)
                         }
-                        maxWidth = (resources.displayMetrics.widthPixels * 0.78).toInt()
+                    }
+
+                    val bubbleTv = TextView(this).apply {
+                        text = msgText
+                        textSize = 15f
+                        setTextColor(if (isUser) userBubbleText else primaryText)
+                        maxWidth = (resources.displayMetrics.widthPixels * 0.76).toInt()
                         setOnLongClickListener {
                             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("Mesaj", msgText))
@@ -1209,7 +1355,40 @@ class MainActivity : AppCompatActivity() {
                             true
                         }
                     }
-                    row.addView(bubble)
+                    bubbleBox.addView(bubbleTv)
+
+                    // SOHBET İÇİNDE RESİM GÖSTERME & TIKLAYINCA TAM EKRAN AÇMA!
+                    if (imgUrl.isNotEmpty()) {
+                        val chatImgView = ImageView(this).apply {
+                            layoutParams = LinearLayout.LayoutParams(620, 420).apply {
+                                topMargin = 20
+                            }
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            background = GradientDrawable().apply {
+                                cornerRadius = 28f
+                                setColor(Color.parseColor("#22222A"))
+                            }
+                        }
+                        val tapHint = TextView(this).apply {
+                            text = "🔍 Tam ekran görmek ve indirmek için resme dokunun"
+                            textSize = 11f
+                            setTextColor(secondaryText)
+                            setPadding(4, 10, 4, 0)
+                        }
+                        bubbleBox.addView(chatImgView)
+                        bubbleBox.addView(tapHint)
+
+                        loadBitmapAsync(imgUrl) { bmp ->
+                            if (bmp != null) {
+                                chatImgView.setImageBitmap(bmp)
+                                chatImgView.setOnClickListener {
+                                    showFullScreenImageDialog(bmp, msgText)
+                                }
+                            }
+                        }
+                    }
+
+                    row.addView(bubbleBox)
                     messagesList.addView(row)
                 }
                 messagesScroll.post { messagesScroll.fullScroll(View.FOCUS_DOWN) }
@@ -1223,9 +1402,18 @@ class MainActivity : AppCompatActivity() {
                 textSize = 20f
                 setTextColor(primaryText)
                 typeface = Typeface.DEFAULT_BOLD
-                setPadding(10, 0, 10, 30)
+                setPadding(10, 0, 10, 10)
             }
             drawerPanel.addView(drawerTitle)
+
+            val syncAcc = AppConfig.getAccountEmail(this)
+            val syncBadge = TextView(this).apply {
+                text = if (syncAcc.isNotEmpty()) "☁️ Eşitlenen Hesap: $syncAcc" else "☁️ Cihazlar arası eşitleme kapalı (Ayarlar'dan açın)"
+                textSize = 12f
+                setTextColor(secondaryText)
+                setPadding(10, 0, 10, 25)
+            }
+            drawerPanel.addView(syncBadge)
 
             val newChatDrawerBtn = TextView(this).apply {
                 text = "＋   Yeni Sohbet Başlat"
@@ -1368,7 +1556,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val chatInput = EditText(this).apply {
-            hint = "$aiName'a mesaj yazın..."
+            hint = "$aiName'a mesaj yazın veya 'resim çiz' deyin..."
             setHintTextColor(secondaryText)
             setTextColor(primaryText)
             textSize = 15f
@@ -1396,7 +1584,10 @@ class MainActivity : AppCompatActivity() {
 
         val micBtn = GeminiMicButtonView(this, userBubbleBg).apply {
             layoutParams = LinearLayout.LayoutParams(76, 76).apply { rightMargin = 16 }
-            setOnClickListener { startAssistantService("WAKE_NOW") }
+            setOnClickListener {
+                Toast.makeText(this@MainActivity, "Dinliyorum, konuşabilirsiniz...", Toast.LENGTH_SHORT).show()
+                startAssistantService("WAKE_SILENT_IN_CHAT")
+            }
         }
 
         val sendBtn = VectorIconView(this, "SEND", primaryText).apply {
@@ -1421,8 +1612,92 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // YENİLENMİŞ MODERN AYARLAR EKRANI (Açık/Karanlık Tema + 12 Renk Paleti + 8 Ses: Claude Dahil)
+    // RESME TIKLAYINCA TAM EKRAN AÇAN VE GALERİYE KAYDEDEN PENCERE
+    private fun showFullScreenImageDialog(bmp: Bitmap, title: String) {
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val box = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#F2050508"))
+        }
+        val fullImg = ImageView(this).apply {
+            setImageBitmap(bmp)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        }
+        val topControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(40, 50, 40, 30)
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP)
+        }
+        val saveBtn = TextView(this).apply {
+            text = "📥 Galeriye Kaydet"
+            textSize = 14f
+            setTextColor(Color.BLACK)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(36, 20, 36, 20)
+            background = GradientDrawable().apply { cornerRadius = 40f; setColor(Color.WHITE) }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = 20 }
+            setOnClickListener {
+                saveBitmapToGallery(bmp, title)
+            }
+        }
+        val closeBtn = TextView(this).apply {
+            text = "✕ Kapat"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(36, 20, 36, 20)
+            background = GradientDrawable().apply { cornerRadius = 40f; setColor(Color.parseColor("#33FFFFFF")) }
+            setOnClickListener { dialog.dismiss() }
+        }
+        topControls.addView(saveBtn)
+        topControls.addView(closeBtn)
+        box.addView(fullImg)
+        box.addView(topControls)
+        dialog.setContentView(box)
+        dialog.show()
+    }
+
+    private fun saveBitmapToGallery(bmp: Bitmap, title: String) {
+        try {
+            val filename = "AI_Gorsel_${System.currentTimeMillis()}.png"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                }
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+                Toast.makeText(this, "Görsel galeriye kaydedildi!", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Kaydedilemedi.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun loadBitmapAsync(url: String, onLoaded: (Bitmap?) -> Unit) {
+        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+        imageHttpClient.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { onLoaded(null) }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val bytes = response.body?.bytes()
+                val bmp = if (bytes != null && bytes.size > 500) BitmapFactory.decodeByteArray(bytes, 0, bytes.size) else null
+                runOnUiThread { onLoaded(bmp) }
+            }
+        })
+    }
+
+    // YENİ AÇILIR MENÜLÜ (POP-UP DIALOG) KOMPAKT VE ŞIK AYARLAR EKRANI
+    // (Dil, Ses, Model, Hız ve Hesap Bağlama kendi üzerine basınca açılır!)
     private fun showSettingsScreen() {
+        isChatScreenOpen = false
         sphereView = null
         onNewMessageCallback = null
         applyThemeBackground()
@@ -1441,7 +1716,7 @@ class MainActivity : AppCompatActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(45, 50, 45, 80) }
 
         val backTv = TextView(this).apply {
-            text = "←   Ayarlar & Özelleştirme"
+            text = "←   Ayarlar & Kontrol Merkezi"
             textSize = 22f
             setTextColor(primaryText)
             typeface = Typeface.DEFAULT_BOLD
@@ -1459,71 +1734,58 @@ class MainActivity : AppCompatActivity() {
             setTextColor(secondaryText)
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.08f
-            setPadding(12, 34, 12, 14)
+            setPadding(12, 32, 12, 14)
         }
 
-        fun optionCard(label: String, subtitle: String?, rightBadge: String?, isSelected: Boolean, onClick: () -> Unit): View {
+        fun dropdownCard(title: String, currentValue: String, badgeText: String, onClick: () -> Unit): View {
             return LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(38, 28, 38, 28)
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 14 }
+                setPadding(40, 32, 40, 32)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
                 background = GradientDrawable().apply {
-                    cornerRadius = 30f
+                    cornerRadius = 32f
                     setColor(cardBg)
-                    setStroke(if (isSelected) 4 else 2, if (isSelected) activeBorder else borderCol)
+                    setStroke(2, borderCol)
                 }
                 val textCol = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 val t1 = TextView(this@MainActivity).apply {
-                    text = label
-                    textSize = 15f
+                    text = title
+                    textSize = 16f
                     setTextColor(primaryText)
-                    typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    typeface = Typeface.DEFAULT_BOLD
+                }
+                val t2 = TextView(this@MainActivity).apply {
+                    text = currentValue
+                    textSize = 13f
+                    setTextColor(activeBorder)
+                    setPadding(0, 6, 0, 0)
                 }
                 textCol.addView(t1)
-                if (!subtitle.isNullOrEmpty()) {
-                    val t2 = TextView(this@MainActivity).apply {
-                        text = subtitle
-                        textSize = 12f
-                        setTextColor(secondaryText)
-                        setPadding(0, 4, 0, 0)
-                    }
-                    textCol.addView(t2)
-                }
+                textCol.addView(t2)
                 addView(textCol)
 
-                if (rightBadge != null) {
-                    val b = TextView(this@MainActivity).apply {
-                        text = rightBadge
-                        textSize = 12f
-                        setTextColor(primaryText)
-                        typeface = Typeface.DEFAULT_BOLD
-                        setPadding(24, 10, 24, 10)
-                        background = GradientDrawable().apply {
-                            cornerRadius = 20f
-                            setColor(borderCol)
-                        }
+                val badge = TextView(this@MainActivity).apply {
+                    text = "$badgeText  ▾"
+                    textSize = 12f
+                    setTextColor(primaryText)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(26, 12, 26, 12)
+                    background = GradientDrawable().apply {
+                        cornerRadius = 22f
+                        setColor(borderCol)
                     }
-                    addView(b)
                 }
-                if (isSelected) {
-                    val check = TextView(this@MainActivity).apply {
-                        text = "   ✓"
-                        textSize = 18f
-                        setTextColor(activeBorder)
-                        typeface = Typeface.DEFAULT_BOLD
-                    }
-                    addView(check)
-                }
+                addView(badge)
                 setOnClickListener { onClick() }
             }
         }
 
-        // 1. GÖRÜNÜM: AÇIK TEMA / KARANLIK TEMA & 12 RENK PALETİ
-        col.addView(sectionHeader("Tema & Küre Renk Paleti"))
+        // 1. TEMA & BIXBY RENK PALETİ
+        col.addView(sectionHeader("Tema & Bixby Renk Paleti"))
         val themeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 18 }
@@ -1568,7 +1830,6 @@ class MainActivity : AppCompatActivity() {
         themeRow.addView(lightBtn)
         col.addView(themeRow)
 
-        // 12 Renklik Yuvarlak Palet Seçici
         val paletteScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
@@ -1576,7 +1837,7 @@ class MainActivity : AppCompatActivity() {
         val paletteRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(10, 16, 10, 16)
+            setPadding(10, 14, 10, 14)
         }
         for ((cName, cVal) in COLOR_PALETTE) {
             val isChosen = (accentColor == cVal)
@@ -1591,7 +1852,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             val circle = View(this).apply {
-                layoutParams = LinearLayout.LayoutParams(86, 86)
+                layoutParams = LinearLayout.LayoutParams(84, 84)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(cVal)
@@ -1612,96 +1873,136 @@ class MainActivity : AppCompatActivity() {
         paletteScroll.addView(paletteRow)
         col.addView(paletteScroll)
 
-        // 2. 8 ADET STÜDYO SES PROFİLİ (4 KIZ + 4 ERKEK - CLAUDE SESİ DAHİL!)
-        col.addView(sectionHeader("8 Stüdyo İnsan Sesi (4 Kadın + 4 Erkek — Claude Dahil)"))
-        val curVoice = AppConfig.getVoiceProfile(this)
-        val voiceProfiles = listOf(
-            Triple(0, "👩  Claude Sıcak Kadın (Alloy HD ★ 5.0)", "En doğal, samimi ve duygusal Claude kadın tonu"),
-            Triple(1, "👩  Nova Doğal Kadın (Emel HD ★ 5.0)", "Yumuşak, net ve akıcı stüdyo kadın sesi"),
-            Triple(2, "👩‍🎤  Shimmer Berrak Kadın (Seda HD ★ 4.9)", "Canlı, enerjik ve parlak asistan tonu"),
-            Triple(3, "👩‍💼  Coral Akıcı Kadın (Zeynep HD ★ 4.9)", "Profesyonel ve dengeli spiker tonu"),
-            Triple(4, "👨  Claude Doğal Erkek (Ash HD ★ 5.0)", "Claude AI tarzı sıcak, zeki ve akıcı erkek sesi"),
-            Triple(5, "👨  Onyx Karizmatik Erkek (Ahmet HD ★ 5.0)", "Net, güven veren karizmatik erkek sesi"),
-            Triple(6, "🧔  Echo Derin Stüdyo Erkek (★ 4.9)", "Yumuşak ve sakin stüdyo erkek tonu"),
-            Triple(7, "🧔  Sage Jarvis Tonu (★ 5.0)", "Tok, bilge ve sinematik Jarvis erkek sesi")
-        )
-        voiceProfiles.forEach { (idx, title, desc) ->
-            col.addView(optionCard(title, desc, "Dinle", curVoice == idx) {
-                AppConfig.setVoiceProfile(this, idx)
-                startAssistantService("TEST_VOICE")
-                showSettingsScreen()
-            })
-        }
+        // 2. AÇILIR PENCERELİ SES, DİL, MODEL VE HIZ SEÇİCİLERİ (Üzerine basınca açılır!)
+        col.addView(sectionHeader("Ses, Dil & Yapay Zeka Seçenekleri (Seçmek İçin Dokunun)"))
 
-        // 3. KİMLİK, ANAHTAR VE OTONOM KONTROL
-        col.addView(sectionHeader("Kimlik, API Anahtarı & Otonom Yetenekler"))
-        col.addView(optionCard("Asistan Adı: ${AppConfig.getName(this)}", "\"Hey ${AppConfig.getName(this)}\" komutuyla uyanır", "Değiştir", false) { showRenameDialog() })
-        col.addView(optionCard("Hitap Adınız: ${AppConfig.getUserName(this)}", "Asistanın size hitap şekli", "Değiştir", false) { showRenameDialog() })
-        col.addView(optionCard("Gemini API Anahtarı", "AIza... veya AQ... anahtarınızı yönetin", "Düzenle", false) { showApiKeyDialog() })
-        col.addView(optionCard("Özel Uygulama Simgesi", "Galeriden seçtiğiniz fotoğrafı ana ekran simgesi yapar", "Yükle", false) {
+        val curVoiceIdx = AppConfig.getVoiceProfile(this)
+        val curVoiceLabel = AppConfig.VOICE_LIST.firstOrNull { it.first == curVoiceIdx }?.third ?: "Claude Ash"
+        col.addView(dropdownCard("🎙️ Ses Profili (10 Claude & Stüdyo Sesi)", curVoiceLabel, "Sesi Seç") {
+            val labels = AppConfig.VOICE_LIST.map { it.third }.toTypedArray()
+            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Ses Profili Seçin")
+                .setSingleChoiceItems(labels, curVoiceIdx) { d, which ->
+                    AppConfig.setVoiceProfile(this, which)
+                    startAssistantService("TEST_VOICE")
+                    d.dismiss()
+                    showSettingsScreen()
+                }
+                .show()
+        })
+
+        val curLangCode = AppConfig.getLang(this)
+        val curLangLabel = AppConfig.LANG_LIST.firstOrNull { it.first == curLangCode }?.second ?: "🇹🇷 Türkçe"
+        col.addView(dropdownCard("🌍 Konuşma ve Algılama Dili", curLangLabel, "Dili Seç") {
+            val labels = AppConfig.LANG_LIST.map { it.second }.toTypedArray()
+            val curIdx = AppConfig.LANG_LIST.indexOfFirst { it.first == curLangCode }.coerceAtLeast(0)
+            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Dil Seçin")
+                .setSingleChoiceItems(labels, curIdx) { d, which ->
+                    AppConfig.setLang(this, AppConfig.LANG_LIST[which].first)
+                    startAssistantService("RELOAD_CONFIG")
+                    d.dismiss()
+                    showSettingsScreen()
+                }
+                .show()
+        })
+
+        val curModelCode = AppConfig.getModelChoice(this)
+        val curModelLabel = AppConfig.MODEL_LIST.firstOrNull { it.first == curModelCode }?.second ?: "Hydrogen Ultra"
+        col.addView(dropdownCard("🧠 Yapay Zeka Beyin Motoru", curModelLabel, "Modeli Seç") {
+            val labels = AppConfig.MODEL_LIST.map { "${it.second}\n${it.third}" }.toTypedArray()
+            val curIdx = AppConfig.MODEL_LIST.indexOfFirst { it.first == curModelCode }.coerceAtLeast(0)
+            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Yapay Zeka Motoru Seçin")
+                .setSingleChoiceItems(labels, curIdx) { d, which ->
+                    AppConfig.setModelChoice(this, AppConfig.MODEL_LIST[which].first)
+                    startAssistantService("RELOAD_CONFIG")
+                    d.dismiss()
+                    showSettingsScreen()
+                }
+                .show()
+        })
+
+        val curSpeed = AppConfig.getSpeed(this)
+        val curSpeedLabel = AppConfig.SPEED_LIST.firstOrNull { kotlin.math.abs(it.first - curSpeed) < 0.05f }?.second ?: "Normal (1.0x)"
+        col.addView(dropdownCard("⚡ Konuşma Hızı", curSpeedLabel, "Hızı Seç") {
+            val labels = AppConfig.SPEED_LIST.map { it.second }.toTypedArray()
+            val curIdx = AppConfig.SPEED_LIST.indexOfFirst { kotlin.math.abs(it.first - curSpeed) < 0.05f }.coerceAtLeast(0)
+            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Konuşma Hızı Seçin")
+                .setSingleChoiceItems(labels, curIdx) { d, which ->
+                    AppConfig.setSpeed(this, AppConfig.SPEED_LIST[which].first)
+                    startAssistantService("RELOAD_CONFIG")
+                    d.dismiss()
+                    showSettingsScreen()
+                }
+                .show()
+        })
+
+        // 3. BULUT HESAP BAĞLAMA (Telefon & Tablet Ortak Sohbet Geçmişi)
+        col.addView(sectionHeader("Cihazlar Arası Bulut Hesap Eşitleme"))
+        val connectedAcc = AppConfig.getAccountEmail(this)
+        col.addView(dropdownCard(
+            "☁️ Google / E-Posta ile Hesap Bağla",
+            if (connectedAcc.isNotEmpty()) "Bağlı Hesap: $connectedAcc (Telefon & Tablet Eşitleniyor)" else "Henüz bağlı değil — Tablet ve telefonda aynı geçmişi görmek için dokunun",
+            if (connectedAcc.isNotEmpty()) "Eşitle" else "Bağla"
+        ) {
+            showCloudSyncDialog()
+        })
+
+        // 4. KİMLİK, ANAHTAR, SİMGE & OTONOM KONTROL
+        col.addView(sectionHeader("Kimlik, Simge & Cihaz Yetkileri"))
+        col.addView(dropdownCard("🤖 Asistan & Kullanıcı Adı", "Asistan: ${AppConfig.getName(this)}  ·  Siz: ${AppConfig.getUserName(this)}", "Düzenle") {
+            showRenameDialog()
+        })
+        col.addView(dropdownCard("🔑 Gemini API Anahtarı", "Özel AIza... veya AQ... anahtarınızı girin", "Anahtar") {
+            showApiKeyDialog()
+        })
+        col.addView(dropdownCard("🖼️ Uygulama Simgesini Değiştir", "Galeriden seçtiğiniz fotoğrafı ana ekran simgesi yapar", "Yükle") {
             val pick = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
             startActivityForResult(Intent.createChooser(pick, "Simge Seçin"), REQ_PICK_ICON)
         })
 
         val isAutoEnabled = AsistanOtonomService.instance != null
-        col.addView(optionCard(
-            if (isAutoEnabled) "Otonom Kontrol Aktif" else "Otonom Kontrolü Etkinleştir",
-            "Uygulama içine yazı yazma, otomatik fotoğraf çekme ve WhatsApp gönder tuşu",
-            if (isAutoEnabled) "Açık" else "Aç",
-            isAutoEnabled
+        col.addView(dropdownCard(
+            "⚙️ Otonom Uygulama Kontrolü",
+            if (isAutoEnabled) "Aktif (Otomatik yazı yazma, fotoğraf çekme ve mesaj gönderme)" else "Kapalı — Etkinleştirmek için dokunun",
+            if (isAutoEnabled) "Açık" else "Aç"
         ) {
             try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (e: Exception) {}
         })
 
-        // 4. YAPAY ZEKA MOTORU
-        col.addView(sectionHeader("Yapay Zeka Beyin Motoru"))
-        val curModel = AppConfig.getModelChoice(this)
-        val models = listOf(
-            Triple("3.2_FLASH", "⚡ 3.2 Flash Motoru", "0.4 saniye ultra hızlı yanıt ve anında uygulama kontrolü"),
-            Triple("HYDROGEN", "🔥 Hydrogen Motoru", "Derin sohbet, canlı internet araştırması ve görsel üretim"),
-            Triple("ARGON", "💎 Argon Pro Motoru", "En üst düzey analitik zeka, problem çözme ve detaylı anlatım")
-        )
-        models.forEach { (mCode, mLabel, mDesc) ->
-            col.addView(optionCard(mLabel, mDesc, mCode, curModel == mCode) {
-                AppConfig.setModelChoice(this, mCode)
-                startAssistantService("RELOAD_CONFIG")
-                showSettingsScreen()
-            })
-        }
-
-        // 5. KONUŞMA HIZI & DİL
-        col.addView(sectionHeader("Konuşma Hızı & Dil"))
-        val curSpeed = AppConfig.getSpeed(this)
-        val speeds = listOf(
-            Triple("Normal Hız", "1.0x doğal konuşma temposu", 1.0f),
-            Triple("Hızlı Tempo", "1.2x akıcı ve seri konuşma", 1.2f),
-            Triple("Turbo Tempo", "1.4x maksimum hız", 1.4f)
-        )
-        speeds.forEach { (label, desc, value) ->
-            col.addView(optionCard(label, desc, "${value}x", kotlin.math.abs(curSpeed - value) < 0.05f) {
-                AppConfig.setSpeed(this, value)
-                startAssistantService("RELOAD_CONFIG")
-                showSettingsScreen()
-            })
-        }
-
-        val curLang = AppConfig.getLang(this)
-        val langOptions = listOf(
-            "🇹🇷   Türkçe" to "tr-TR",
-            "🇺🇸   İngilizce" to "en-US",
-            "🇸🇦   Arapça" to "ar-SA",
-            "🇷🇺   Rusça" to "ru-RU"
-        )
-        langOptions.forEach { (title, code) ->
-            col.addView(optionCard(title, null, null, curLang == code) {
-                AppConfig.setLang(this, code)
-                startAssistantService("RELOAD_CONFIG")
-                showSettingsScreen()
-            })
-        }
-
         scroll.addView(col)
         rootContainer.addView(scroll)
+    }
+
+    private fun showCloudSyncDialog() {
+        val input = EditText(this).apply {
+            setText(AppConfig.getAccountEmail(this@MainActivity))
+            hint = "Gmail adresiniz veya ortak bir şifre yazın..."
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setPadding(45, 35, 45, 35)
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("☁️ Telefon & Tablet Hesap Eşitleme")
+            .setMessage("Hem telefonunuzda hem tabletinizde aynı Gmail adresini (veya belirlediğiniz özel bir kodu) girin. İki cihazdaki sohbet geçmişiniz anında eşitlenir:")
+            .setView(input)
+            .setPositiveButton("Bağla ve Eşitle") { _, _ ->
+                val acc = input.text.toString().trim()
+                AppConfig.setAccountEmail(this, acc)
+                if (acc.isNotEmpty()) {
+                    Toast.makeText(this, "Bulut hesabı eşitleniyor...", Toast.LENGTH_SHORT).show()
+                    CloudSyncManager.pullFromCloud(this) { ok ->
+                        Toast.makeText(this, if (ok) "✅ Sohbet geçmişi eşitlendi!" else "☁️ Yeni bulut hesabı oluşturuldu!", Toast.LENGTH_LONG).show()
+                        showSettingsScreen()
+                    }
+                } else {
+                    showSettingsScreen()
+                }
+            }
+            .setNegativeButton("İptal", null)
+            .show()
     }
 
     private fun showRenameDialog() {
@@ -1800,11 +2101,12 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// ARKA PLAN SERVİSİ v16.0:
-// 1) Tabletten gelen video/müzik sesini algılamaz (`isMusicActive` kontrolü: Medya çalarken sadece net "Hey [İsim]" duyarsa uyanır)
-// 2) Sağ alt kapsüldeki metin parmakla yukarı-aşağı kaydırılabilir (`ScrollView` içinde)
-// 3) Cihazdaki TÜM uygulamaları açar ve "Google açıp EBA yaz" gibi birleşik komutları eksiksiz yapar
-// 4) 8 Adet Stüdyo Ses Profili (Claude Alloy/Ash dahil)
+// ARKA PLAN SERVİSİ v17.0:
+// - Samsung Bixby Tasarımlı & Dinamik Renkli Sağ Alt Kapsül
+// - Sohbet ekranı açıkken (`MainActivity.isChatScreenOpen`) sağ alt bar ASLA açılmaz!
+// - "Gaziantep'e yol tarifi al" dediğinde doğrudan Google Maps Navigasyonu (`google.navigation:q=...`) başlatır!
+// - Sadece "Duman" / "Fındık" denildiğinde gereksiz Twitter/Web araması yapmaz!
+// - Flux Realism Görsel Üretim Motoru (Hem sohbette hem sağ altta tam ekran açılabilir)
 class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var windowManager: WindowManager
     private lateinit var overlayParams: WindowManager.LayoutParams
@@ -1812,11 +2114,11 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private lateinit var imageCardView: LinearLayout
     private lateinit var resultImageView: ImageView
     private lateinit var imageCaptionTv: TextView
-    private lateinit var assistantPill: LinearLayout
+    private lateinit var bixbyPill: LinearLayout
+    private lateinit var bixbyOrbIcon: BixbyOrbIconView
     private lateinit var pillScrollWrapper: ScrollView
     private lateinit var pillPromptTv: TextView
     private lateinit var pillInlineEdit: EditText
-    private lateinit var geminiMicBtn: GeminiMicButtonView
     private lateinit var waveView: GeminiWaveIconView
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -1828,8 +2130,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private var pendingSpeechText: String? = null
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(7, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -1868,6 +2170,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             rootOverlayLayout.visibility = View.GONE
             imageCardView.visibility = View.GONE
             MainActivity.sphereView?.isActive = false
+            bixbyOrbIcon.isAnimating = false
         }
     }
 
@@ -1884,7 +2187,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 sentenceBuffer.clear()
                 latestPartialChunk = ""
                 imageCardView.visibility = View.GONE
-                wakeUpRightBottomPill("Dinliyorum...")
+                wakeUpBixbyPill("Dinliyorum...", showVisualPill = !MainActivity.isChatScreenOpen)
+            }
+            "WAKE_SILENT_IN_CHAT" -> {
+                // Sohbet ekranındayken sağ alttan bar çıkarma, doğrudan dinle ve sohbete yaz!
+                isProcessing = false
+                isSpeaking = false
+                sentenceBuffer.clear()
+                latestPartialChunk = ""
+                rootOverlayLayout.visibility = View.GONE
+                wakeUpBixbyPill("Dinliyorum...", showVisualPill = false)
             }
             "FINALIZE_SPEECH" -> {
                 mainHandler.removeCallbacks(commitSpeechRunnable)
@@ -1898,7 +2210,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             "APP_FOREGROUND" -> {
-                if (!isAwakeForCommand && !isSpeaking) {
+                if (MainActivity.isChatScreenOpen || (!isAwakeForCommand && !isSpeaking)) {
                     mainHandler.post { rootOverlayLayout.visibility = View.GONE }
                 }
             }
@@ -1911,33 +2223,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
             "TEST_VOICE" -> {
                 val p = AppConfig.getVoiceProfile(this)
-                val vName = when (p) {
-                    0 -> "Claude sıcak kadın sesim"
-                    1 -> "Nova doğal kadın sesim"
-                    2 -> "Shimmer berrak kadın sesim"
-                    3 -> "Coral akıcı kadın sesim"
-                    4 -> "Claude doğal erkek sesim"
-                    5 -> "Onyx karizmatik erkek sesim"
-                    6 -> "Echo derin stüdyo erkek sesim"
-                    else -> "Sage bilge Jarvis sesim"
-                }
-                speakHighRatedVoice("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Şu an $vName ile konuşuyorum.")
+                val vLabel = AppConfig.VOICE_LIST.firstOrNull { it.first == p }?.third ?: "Claude Sesim"
+                speakHighRatedVoice("Merhaba ${AppConfig.getUserName(this)}, ben ${AppConfig.getName(this)}. Şu an $vLabel ile konuşuyorum.")
             }
             "RELOAD_CONFIG" -> {
                 applyHighestRatedVoiceToTts()
                 mainHandler.post {
-                    val accent = AppConfig.getSphereColor(this)
-                    geminiMicBtn.accentColor = accent
-                    geminiMicBtn.invalidate()
-                    waveView.barColor = accent
-                    waveView.invalidate()
-                    assistantPill.background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = 90f
-                        setColor(Color.parseColor("#E6101016"))
-                        setStroke(3, accent)
-                    }
-                    pillPromptTv.text = "${AppConfig.getName(this)}'a sorun"
+                    applyBixbyDynamicColor()
+                    pillPromptTv.text = AppConfig.getName(this).ifEmpty { "Asistan" }
                     startAsForeground()
                 }
             }
@@ -1948,13 +2241,13 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun acquireWakeLock() {
         if (wakeLock == null) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MasterAI::AlwaysOnMicV16")
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MasterAI::AlwaysOnMicV17")
             wakeLock?.acquire()
         }
     }
 
     private fun startAsForeground() {
-        val channelId = "master_ai_v16_channel"
+        val channelId = "master_ai_v17_channel"
         val aiName = AppConfig.getName(this).ifEmpty { "Asistan" }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "$aiName Kesintisiz Dinleme", NotificationManager.IMPORTANCE_LOW)
@@ -1971,6 +2264,39 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(1, notification)
+        }
+    }
+
+    // SAMSUNG BIXBY TARZI DİNAMİK RENKLİ YÜZEN KAPSÜL TASARIMI
+    private fun applyBixbyDynamicColor() {
+        val accent = AppConfig.getSphereColor(this)
+        val r = Color.red(accent)
+        val g = Color.green(accent)
+        val b = Color.blue(accent)
+
+        bixbyOrbIcon.mainColor = accent
+        bixbyOrbIcon.invalidate()
+
+        waveView.barColor = accent
+        waveView.invalidate()
+
+        bixbyPill.background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(
+                Color.argb(242, (r * 0.22f).toInt().coerceAtLeast(14), (g * 0.22f).toInt().coerceAtLeast(14), (b * 0.22f).toInt().coerceAtLeast(20)),
+                Color.parseColor("#F2101018"),
+                Color.argb(242, (r * 0.16f).toInt().coerceAtLeast(12), (g * 0.16f).toInt().coerceAtLeast(12), (b * 0.16f).toInt().coerceAtLeast(18))
+            )
+        ).apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 110f
+            setStroke(3, Color.argb(210, r, g, b))
+        }
+
+        imageCardView.background = GradientDrawable().apply {
+            cornerRadius = 42f
+            setColor(Color.parseColor("#F2101018"))
+            setStroke(3, Color.argb(200, r, g, b))
         }
     }
 
@@ -1994,69 +2320,59 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         imageCardView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(16, 16, 16, 16)
-            layoutParams = LinearLayout.LayoutParams(540, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 14 }
-            background = GradientDrawable().apply {
-                cornerRadius = 38f
-                setColor(Color.parseColor("#EB101016"))
-                setStroke(2, accent)
-            }
-            setOnClickListener { visibility = View.GONE }
+            setPadding(18, 18, 18, 18)
+            layoutParams = LinearLayout.LayoutParams(560, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
         }
 
         resultImageView = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 310)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 340)
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
 
         imageCaptionTv = TextView(this).apply {
             textSize = 12f
             setTextColor(Color.WHITE)
-            setPadding(12, 8, 12, 4)
+            setPadding(12, 10, 12, 4)
         }
 
         imageCardView.addView(resultImageView)
         imageCardView.addView(imageCaptionTv)
 
-        // ŞIKLAŞTIRILMIŞ VE METNİ KAYDIRILABİLİR (SCROLLABLE) SAĞ ALT KONUŞMA KAPSÜLÜ
-        assistantPill = LinearLayout(this).apply {
+        // SAMSUNG BIXBY KAPSÜLÜ: Sol (Bixby Canlı Küre İkonu) | Orta (Kaydırılabilir Yanıt) | Sağ (Ses Dalgası & Kapat)
+        bixbyPill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(36, 22, 28, 22)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 90f
-                setColor(Color.parseColor("#E6101016"))
-                setStroke(3, accent)
+            setPadding(28, 20, 28, 20)
+        }
+
+        bixbyOrbIcon = BixbyOrbIconView(this, accent).apply {
+            layoutParams = LinearLayout.LayoutParams(82, 82).apply { rightMargin = 22 }
+            setOnClickListener {
+                if (sentenceBuffer.isNotEmpty() || latestPartialChunk.isNotEmpty()) {
+                    mainHandler.removeCallbacks(commitSpeechRunnable)
+                    commitSpeechRunnable.run()
+                } else {
+                    wakeUpBixbyPill("Dinliyorum...", showVisualPill = true)
+                }
             }
         }
 
-        val plusSignTv = TextView(this).apply {
-            text = "＋"
-            textSize = 22f
-            setTextColor(accent)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(4, 0, 22, 0)
-            setOnClickListener { toggleInlineTyping(true) }
-        }
-
-        // Metni yukarı-aşağı parmakla kaydırabilmek için ScrollView sarmalayıcı
         pillScrollWrapper = ScrollView(this).apply {
             isVerticalScrollBarEnabled = true
-            layoutParams = LinearLayout.LayoutParams(440, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                rightMargin = 20
+            layoutParams = LinearLayout.LayoutParams(450, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = 18
             }
         }
 
         pillPromptTv = TextView(this).apply {
-            text = "${AppConfig.getName(this@OverlayService).ifEmpty { "Asistan" }}'a sorun"
+            text = AppConfig.getName(this@OverlayService).ifEmpty { "Asistan" }
             textSize = 15f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 4
             movementMethod = ScrollingMovementMethod.getInstance()
             setOnClickListener {
-                wakeUpRightBottomPill("Dinliyorum...")
+                toggleInlineTyping(true)
             }
         }
         pillScrollWrapper.addView(pillPromptTv)
@@ -2069,7 +2385,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             background = null
             visibility = View.GONE
             minWidth = 340
-            maxWidth = 440
+            maxWidth = 450
             imeOptions = EditorInfo.IME_ACTION_SEND
             setSingleLine(true)
             setOnEditorActionListener { _, actionId, _ ->
@@ -2083,39 +2399,18 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        geminiMicBtn = GeminiMicButtonView(this, accent).apply {
-            layoutParams = LinearLayout.LayoutParams(76, 76).apply { rightMargin = 16 }
-            setOnClickListener {
-                if (pillInlineEdit.visibility == View.VISIBLE) {
-                    val typed = pillInlineEdit.text.toString().trim()
-                    pillInlineEdit.setText("")
-                    toggleInlineTyping(false)
-                    if (typed.isNotEmpty()) {
-                        processFullCommand(typed)
-                        return@setOnClickListener
-                    }
-                }
-                if (sentenceBuffer.isNotEmpty() || latestPartialChunk.isNotEmpty()) {
-                    mainHandler.removeCallbacks(commitSpeechRunnable)
-                    commitSpeechRunnable.run()
-                } else {
-                    wakeUpRightBottomPill("Dinliyorum...")
-                }
-            }
-        }
-
         waveView = GeminiWaveIconView(this).apply {
             barColor = accent
-            layoutParams = LinearLayout.LayoutParams(56, 56).apply { rightMargin = 12 }
+            layoutParams = LinearLayout.LayoutParams(56, 56).apply { rightMargin = 14 }
             setOnClickListener {
-                wakeUpRightBottomPill("Dinliyorum...")
+                wakeUpBixbyPill("Dinliyorum...", showVisualPill = true)
             }
         }
 
         val closePillBtn = TextView(this).apply {
             text = "✕"
             textSize = 16f
-            setTextColor(Color.parseColor("#A1A1AA"))
+            setTextColor(Color.parseColor("#CBD5E1"))
             setPadding(12, 6, 8, 6)
             setOnClickListener {
                 stopAllAudioAndReleaseFocus()
@@ -2125,19 +2420,21 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 latestPartialChunk = ""
                 rootOverlayLayout.visibility = View.GONE
                 imageCardView.visibility = View.GONE
+                bixbyOrbIcon.isAnimating = false
                 freshRestartMic()
             }
         }
 
-        assistantPill.addView(plusSignTv)
-        assistantPill.addView(pillScrollWrapper)
-        assistantPill.addView(pillInlineEdit)
-        assistantPill.addView(geminiMicBtn)
-        assistantPill.addView(waveView)
-        assistantPill.addView(closePillBtn)
+        bixbyPill.addView(bixbyOrbIcon)
+        bixbyPill.addView(pillScrollWrapper)
+        bixbyPill.addView(pillInlineEdit)
+        bixbyPill.addView(waveView)
+        bixbyPill.addView(closePillBtn)
+
+        applyBixbyDynamicColor()
 
         rootOverlayLayout.addView(imageCardView)
-        rootOverlayLayout.addView(assistantPill)
+        rootOverlayLayout.addView(bixbyPill)
 
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -2201,7 +2498,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun wakeUpRightBottomPill(text: String) {
+    private fun wakeUpBixbyPill(text: String, showVisualPill: Boolean = !MainActivity.isChatScreenOpen) {
         mainHandler.post {
             mainHandler.removeCallbacks(hideOverlayRunnable)
             mainHandler.removeCallbacks(commitSpeechRunnable)
@@ -2209,7 +2506,17 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             isProcessing = false
             isSpeaking = false
             isAwakeForCommand = true
-            rootOverlayLayout.visibility = View.VISIBLE
+            applyBixbyDynamicColor()
+            bixbyOrbIcon.isAnimating = true
+            bixbyOrbIcon.invalidate()
+
+            // SOHBET EKRANINDAYKEN SAĞ ALTTAN BAR ÇIKARMA!
+            if (showVisualPill && !MainActivity.isChatScreenOpen) {
+                rootOverlayLayout.visibility = View.VISIBLE
+            } else {
+                rootOverlayLayout.visibility = View.GONE
+            }
+
             pillPromptTv.text = text
             pillPromptTv.scrollTo(0, 0)
             MainActivity.sphereView?.isActive = true
@@ -2247,30 +2554,28 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         MainActivity.sphereView?.isActive = true
         MainActivity.sphereView?.audioLevel = 4.2f
         mainHandler.post {
+            bixbyOrbIcon.isAnimating = true
+            bixbyOrbIcon.audioAmp = 4.5f
             waveView.activeWave = true
             waveView.invalidate()
         }
     }
 
-    // TABLETTE VİDEO İZLERKEN VİDEONUN SESİNİ ALGILAMAMA KONTROLÜ:
-    // Eğer tablette arka planda video/müzik çalıyorsa (`am.isMusicActive`), konuşma bitince otomatik açık dinlemeye geçmez;
-    // sadece senin "Hey [İsim]" demeni bekler! Böylece izlediğin videonun sesini asla algılamaz.
     private fun onSpeechDone() {
         mainHandler.post {
             stopAllAudioAndReleaseFocus()
             isProcessing = false
+            bixbyOrbIcon.audioAmp = 0f
             waveView.activeWave = false
             waveView.invalidate()
 
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val isMediaPlayingOnTablet = am.isMusicActive
 
-            if (isMediaPlayingOnTablet) {
-                // Video/müzik oynuyorsa videonun sesini komut sanmaması için doğrudan Wake-Word nöbetine geç!
+            if (isMediaPlayingOnTablet || MainActivity.isChatScreenOpen) {
                 isAwakeForCommand = false
-                mainHandler.postDelayed(hideOverlayRunnable, 3500L)
+                mainHandler.postDelayed(hideOverlayRunnable, 3000L)
             } else {
-                // Ortamda medya çalmıyorsa 2. soruyu doğrudan sorabilsin
                 isAwakeForCommand = true
                 mainHandler.removeCallbacks(hideOverlayRunnable)
                 mainHandler.postDelayed(hideOverlayRunnable, 6500L)
@@ -2279,7 +2584,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // 8 STÜDYO İNSAN SESİ (4 KIZ + 4 ERKEK: Claude Alloy, Nova, Shimmer, Coral, Claude Ash, Onyx, Echo, Sage)
+    // 10 CLAUDE & OPENAI STÜDYO SES MOTORU
     private fun speakHighRatedVoice(text: String) {
         val clean = text.replace(Regex("[*#_~`]"), "").trim()
         if (clean.isEmpty()) {
@@ -2300,40 +2605,31 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         val profile = AppConfig.getVoiceProfile(this)
         val speed = AppConfig.getSpeed(this)
 
-        tryOpenAiStudioVoice(clean, profile) { openAiSuccess ->
+        tryClaudeOpenAiStudioVoice(clean, profile) { openAiSuccess ->
             if (!openAiSuccess) {
                 speakPure500QualityWavenet(clean, profile, speed)
             }
         }
     }
 
-    private fun tryOpenAiStudioVoice(text: String, profile: Int, callback: (Boolean) -> Unit) {
-        val voiceName = when (profile) {
-            0 -> "alloy"   // Kadın 1: Claude Sıcak & Doğal
-            1 -> "nova"    // Kadın 2: Sıcak İnsan Sesi
-            2 -> "shimmer" // Kadın 3: Berrak Kadın Sesi
-            3 -> "coral"   // Kadın 4: Akıcı Spiker Kadın
-            4 -> "ash"     // Erkek 1: Claude Doğal Erkek
-            5 -> "onyx"    // Erkek 2: Karizmatik Erkek
-            6 -> "echo"    // Erkek 3: Derin Stüdyo Erkek
-            else -> "sage" // Erkek 4: Bilge Jarvis Tonu
-        }
+    private fun tryClaudeOpenAiStudioVoice(text: String, profile: Int, callback: (Boolean) -> Unit) {
+        val voiceCode = AppConfig.VOICE_LIST.firstOrNull { it.first == profile }?.second ?: "ash"
 
         val payload = JSONObject().apply {
             put("model", "openai-audio")
             put("modalities", JSONArray().put("text").put("audio"))
             put("audio", JSONObject().apply {
-                put("voice", voiceName)
+                put("voice", voiceCode)
                 put("format", "mp3")
             })
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
-                    put("content", "Verilen metni hiçbir kelime eklemeden, olduğu gibi çok doğal ve sıcak bir Türkçe insan sesiyle oku.")
+                    put("content", "Verilen metni hiçbir kelime eklemeden, olduğu gibi çok doğal, akıcı ve sıcak bir Türkçe insan sesiyle oku.")
                 })
                 put(JSONObject().apply {
                     put("role", "user")
-                    put("content", text.take(260))
+                    put("content", text.take(280))
                 })
             })
         }
@@ -2356,7 +2652,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                         val b64 = audioObj?.optString("data", "") ?: ""
                         if (b64.length > 500) {
                             val mp3Bytes = Base64.decode(b64, Base64.DEFAULT)
-                            val mp3File = File(cacheDir, "studio_voice_v16.mp3")
+                            val mp3File = File(cacheDir, "claude_studio_v17.mp3")
                             FileOutputStream(mp3File).use { it.write(mp3Bytes) }
                             playPureMp3File(mp3File)
                             callback(true)
@@ -2409,9 +2705,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
         tts?.language = locale
 
-        val profile = AppConfig.getVoiceProfile(this) // 0..3: Kadın, 4..7: Erkek
+        val profile = AppConfig.getVoiceProfile(this) // 0..4: Kadın, 5..9: Erkek
         val speed = AppConfig.getSpeed(this)
-        val wantFemale = (profile in 0..3)
+        val wantFemale = (profile in 0..4)
 
         try {
             val allVoices = tts?.voices?.filter {
@@ -2436,22 +2732,15 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 val selected: Voice? = if (wantFemale) {
                     if (femaleVoices.isNotEmpty()) femaleVoices[profile % femaleVoices.size] else allVoices.firstOrNull()
                 } else {
-                    if (maleVoices.isNotEmpty()) maleVoices[(profile - 4).coerceAtLeast(0) % maleVoices.size] else allVoices.lastOrNull()
+                    if (maleVoices.isNotEmpty()) maleVoices[(profile - 5).coerceAtLeast(0) % maleVoices.size] else allVoices.lastOrNull()
                 }
                 if (selected != null) tts?.voice = selected
             }
         } catch (e: Exception) {}
 
-        when (profile) {
-            0 -> { tts?.setPitch(0.98f); tts?.setSpeechRate(speed * 1.0f) }  // Claude Kadın
-            1 -> { tts?.setPitch(1.02f); tts?.setSpeechRate(speed * 1.01f) } // Nova Kadın
-            2 -> { tts?.setPitch(1.06f); tts?.setSpeechRate(speed * 1.03f) } // Shimmer Kadın
-            3 -> { tts?.setPitch(1.0f); tts?.setSpeechRate(speed * 1.04f) }  // Coral Kadın
-            4 -> { tts?.setPitch(0.96f); tts?.setSpeechRate(speed * 1.01f) } // Claude Erkek
-            5 -> { tts?.setPitch(0.92f); tts?.setSpeechRate(speed * 1.0f) }  // Onyx Erkek
-            6 -> { tts?.setPitch(0.88f); tts?.setSpeechRate(speed * 0.99f) } // Echo Erkek
-            else -> { tts?.setPitch(0.84f); tts?.setSpeechRate(speed * 0.97f) } // Sage Jarvis
-        }
+        val pitchVal = if (wantFemale) 1.0f + (profile * 0.02f) else 0.96f - ((profile - 5) * 0.03f)
+        tts?.setPitch(pitchVal.coerceIn(0.84f, 1.08f))
+        tts?.setSpeechRate(speed)
     }
 
     private fun speakPure500QualityWavenet(clean: String, profile: Int, speed: Float) {
@@ -2472,7 +2761,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // AKUSTİK YANKI FİLTRELİ MİKROFON MOTORU (Video/Müzik Çalarken Tabletin Kendi Sesini Yoksayar!)
     private fun freshRestartMic() {
         if (isSpeaking || isProcessing) return
         mainHandler.post {
@@ -2505,6 +2793,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             MainActivity.sphereView?.audioLevel = lvl
                         }
                         if (isAwakeForCommand) {
+                            bixbyOrbIcon.audioAmp = lvl
                             waveView.activeWave = lvl > 2.2f
                             waveView.invalidate()
                         }
@@ -2527,7 +2816,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
                         val isMediaPlaying = am.isMusicActive
 
-                        // Eğer tablette video/müzik oynuyorsa ve kullanıcı açıkça "Hey [İsim]" demediyse videonun sesini YOKSAY!
                         val matchedCandidate = matches.firstOrNull { containsWakeWordSmart(it, aiName, strictForMedia = isMediaPlaying) }
 
                         if (!isAwakeForCommand && matchedCandidate != null) {
@@ -2535,7 +2823,10 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             val afterWake = stripWakeWordSmart(matchedCandidate, aiName)
                             latestPartialChunk = afterWake
                             isAwakeForCommand = true
-                            rootOverlayLayout.visibility = View.VISIBLE
+                            if (!MainActivity.isChatScreenOpen) {
+                                rootOverlayLayout.visibility = View.VISIBLE
+                            }
+                            bixbyOrbIcon.isAnimating = true
                             pillPromptTv.text = afterWake.ifEmpty { "Dinliyorum..." }
                             MainActivity.centerSubTv?.text = afterWake.ifEmpty { "Dinliyorum..." }
                             resetFastSilenceTimer()
@@ -2572,7 +2863,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                                 isAwakeForCommand = false
                                 processFullCommand(clean)
                             } else {
-                                wakeUpRightBottomPill("Seni dinliyorum...")
+                                // SADECE "DUMAN" / "FINDIK" DENİLDİĞİNDE GEREKSİZ TWITTER VB. ARAŞTIRMASI YAPMAZ!
+                                wakeUpBixbyPill("Efendim, seni dinliyorum...", showVisualPill = !MainActivity.isChatScreenOpen)
                             }
                         } else if (isAwakeForCommand) {
                             val spoken = matches.firstOrNull()?.trim() ?: ""
@@ -2632,7 +2924,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         return 1.0f - (dp[s1.length][s2.length] / maxLen)
     }
 
-    // Video/Müzik çalarken (`strictForMedia = true`) yalnızca cümlenin başında net seslenildiğinde uyanır, videodaki konuşmaları algılamaz!
     private fun containsWakeWordSmart(spoken: String, aiName: String, strictForMedia: Boolean = false): Boolean {
         val normSpoken = normalizeTr(spoken).trim()
         val normTarget = normalizeTr(aiName.trim())
@@ -2642,7 +2933,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         if (words.isEmpty()) return false
 
         if (strictForMedia) {
-            // Video oynarken sadece ilk 2 kelimede "hey [isim]" veya tam "[isim]" geçerse kabul et
             val firstTwo = words.take(2)
             return firstTwo.any { it == normTarget || levenshteinSimilarity(it, normTarget) >= 0.80f }
         }
@@ -2681,7 +2971,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun resetFastSilenceTimer() {
         mainHandler.removeCallbacks(commitSpeechRunnable)
         if (AppConfig.getTalkMode(this) == "AUTO") {
-            mainHandler.postDelayed(commitSpeechRunnable, 720L) // Daha da düşük gecikme: 0.72 saniye!
+            mainHandler.postDelayed(commitSpeechRunnable, 720L)
         }
     }
 
@@ -2693,23 +2983,36 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         return photoTriggers.any { lowerCmd.contains(it) }
     }
 
-    // GELİŞMİŞ KOMUT İŞLEYİCİ:
-    // - "Google açıp EBA yaz" / "... açıp ... yaz" birleşik komutlarını yakalar
-    // - Cihazdaki BÜTÜN yüklü uygulamaları açar
+    // SÜPER AKILLI KOMUT İŞLEYİCİ v17.0:
+    // - Sadece "Duman" / "Fındık" denildiğinde saçma araştırma yapmaz!
+    // - "Google Haritaları açıp Gaziantep'e yol tarifi al" dediğinde gerçek Google Maps Navigasyonu başlatır!
     private fun processFullCommand(command: String) {
-        isProcessing = true
-        val lower = command.lowercase(Locale("tr", "TR")).trim()
+        val trimmedCmd = command.trim()
+        val lower = trimmedCmd.lowercase(Locale("tr", "TR"))
+        val aiName = AppConfig.getName(this).ifEmpty { "Asistan" }
 
-        AppConfig.addMessageToCurrentSession(this, "user", command)
+        // Sadece asistanın adı söylendiyse ("duman", "fındık", "hey duman") Twitter vb. arama yapma!
+        val strippedCheck = stripWakeWordSmart(lower, aiName)
+        if (strippedCheck.isEmpty() || strippedCheck.length <= 2) {
+            wakeUpBixbyPill("Efendim ${AppConfig.getUserName(this)}, seni dinliyorum?", showVisualPill = !MainActivity.isChatScreenOpen)
+            speakHighRatedVoice("Efendim ${AppConfig.getUserName(this)}, seni dinliyorum?")
+            return
+        }
+
+        isProcessing = true
+        AppConfig.addMessageToCurrentSession(this, "user", trimmedCmd)
         MainActivity.onNewMessageCallback?.invoke()
 
         mainHandler.post {
             imageCardView.visibility = View.GONE
-            if (!MainActivity.isAppInForeground) {
+            if (!MainActivity.isChatScreenOpen) {
                 rootOverlayLayout.visibility = View.VISIBLE
+            } else {
+                rootOverlayLayout.visibility = View.GONE
             }
-            pillPromptTv.text = "⏳ $command"
-            MainActivity.centerSubTv?.text = "⏳ $command"
+            bixbyOrbIcon.isAnimating = true
+            pillPromptTv.text = "⏳ $trimmedCmd"
+            MainActivity.centerSubTv?.text = "⏳ $trimmedCmd"
         }
 
         // 1. Bankacılık Güvenlik Kilidi
@@ -2723,10 +3026,17 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 2. BİRLEŞİK KOMUT YAKALAYICI: "Google açıp EBA yaz", "YouTube açıp ... yaz", "... açıp ... ara"
+        // 2. GERÇEK GOOGLE HARİTALAR NAVİGASYON MOTORU ("Gaziantep'e yol tarifi al", "Haritaları açıp Ankara'ya rota oluştur" vb.)
+        if (lower.contains("yol tarifi") || lower.contains("rota ") || lower.contains("navigasyon") || (lower.contains("harita") && (lower.contains("git") || lower.contains("tarif") || lower.contains("nerede")))) {
+            val dest = extractDestinationFromMapCommand(lower)
+            startGoogleMapsNavigation(dest)
+            return
+        }
+
+        // 3. BİRLEŞİK KOMUT YAKALAYICI ("Google açıp EBA yaz", "YouTube açıp ... aç")
         val compoundRegex = Regex("(.+?)\\s+(?:açıp|acip|aç ve|ac ve|girip)\\s+(.+?)\\s*(?:yaz|ara|arat|aç|ac)?$")
         val compoundMatch = compoundRegex.find(lower)
-        if (compoundMatch != null && !lower.contains("whatsapp") && !lower.contains("mesaj")) {
+        if (compoundMatch != null && !lower.contains("whatsapp") && !lower.contains("mesaj") && !lower.contains("harita")) {
             val rawAppPart = compoundMatch.groupValues[1]
                 .replace("'ı", "").replace("'i", "").replace("'u", "").replace("'ü", "")
                 .replace("yi", "").replace("yı", "").replace("yu", "").replace("yü", "").trim()
@@ -2746,8 +3056,8 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // 3. DOĞRUDAN GOOGLE'A YAZMA KOMUTU ("Google'a EBA yaz", "Google'da EBA ara")
-        if ((lower.contains("google") || lower.contains("chrome") || lower.contains("internette")) && (lower.contains("yaz") || lower.contains("ara") || lower.contains("bak"))) {
+        // 4. DOĞRUDAN GOOGLE WEB ARAMASI ("Google'a EBA yaz")
+        if ((lower.contains("google") || lower.contains("chrome") || lower.contains("internette")) && (lower.contains("yaz") || lower.contains("ara") || lower.contains("bak")) && !lower.contains("harita")) {
             val q = lower
                 .replace("google'ı açıp", "").replace("google açıp", "")
                 .replace("google'da", "").replace("googleda", "").replace("google'a", "").replace("googlea", "").replace("google", "")
@@ -2760,40 +3070,41 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // 4. KAMERAYI AÇIP FOTOĞRAF ÇEKME
+        // 5. KAMERAYI AÇIP FOTOĞRAF ÇEKME
         if (lower.contains("fotoğraf çek") || lower.contains("foto çek") || lower.contains("resim çek") || lower.contains("selfie çek") || lower.contains("özçekim")) {
             capturePhotoAutomatically(isSelfie = lower.contains("selfie") || lower.contains("özçekim") || lower.contains("ön kamera"))
             return
         }
 
-        // 5. GÖRSEL ÜRETİM / FOTOĞRAF GÖSTERME
-        if (lower.contains("resmi çiz") || lower.contains("resim çiz") || lower.contains("görsel oluştur") || lower.contains("görseli oluştur") || lower.contains("resmi oluştur") || lower.contains("fotoğrafını göster") || lower.contains("resmini göster")) {
+        // 6. YÜKSEK KALİTELİ GERÇEKÇİ GÖRSEL ÜRETİM (Flux AI Motoru - Hem Sohbette Hem Sağ Altta)
+        if (lower.contains("resmi çiz") || lower.contains("resim çiz") || lower.contains("görsel oluştur") || lower.contains("görseli oluştur") || lower.contains("resmi oluştur") || lower.contains("resim üret") || lower.contains("görsel üret") || lower.contains("fotoğrafını göster") || lower.contains("resmini göster")) {
             val imgPrompt = lower
                 .replace("bana", "").replace("resmi çiz", "").replace("resim çiz", "")
                 .replace("görsel oluştur", "").replace("görseli oluştur", "").replace("resmi oluştur", "")
+                .replace("resim üret", "").replace("görsel üret", "")
                 .replace("fotoğrafını göster", "").replace("resmini göster", "").trim()
-                .ifEmpty { command }
-            generateOrFetchImageInRightBottom(imgPrompt)
+                .ifEmpty { trimmedCmd }
+            generateHighQualityFluxImage(imgPrompt)
             return
         }
 
-        // 6. WHATSAPP MESAJ GÖNDERME
+        // 7. WHATSAPP MESAJ GÖNDERME
         if (lower.contains("whatsapp") || lower.contains("mesaj at") || lower.contains("mesaj gönder") || lower.contains("diye yaz")) {
-            if (handleWhatsAppMessageCommand(command, lower)) return
+            if (handleWhatsAppMessageCommand(trimmedCmd, lower)) return
         }
 
-        // 7. TELEFONLA ARAMA
+        // 8. TELEFONLA ARAMA
         if (lower.endsWith(" ara") && !lower.contains("internette") && !lower.contains("google") && !lower.contains("youtube") && !lower.contains("araştır")) {
             val targetPerson = lower.removeSuffix(" ara").replace("yi", "").replace("yı", "").replace("i", "").replace("ı", "").trim()
             if (targetPerson.isNotEmpty() && dialContactByName(targetPerson)) return
         }
 
-        // 8. ALARM KURMA
+        // 9. ALARM KURMA
         if (lower.contains("alarm kur") || lower.contains("alarmı kur")) {
             if (handleSetAlarm(lower)) return
         }
 
-        // 9. YOUTUBE DİREKT VİDEO OYNATMA
+        // 10. YOUTUBE DİREKT VİDEO OYNATMA
         if (lower.contains("video") || lower.contains("izle") || lower.contains("youtube") || lower.contains("şarkı aç") || lower.contains("müzik aç") || lower.contains("klip aç")) {
             val query = lower
                 .replace("youtube'u açıp", "").replace("youtube açıp", "").replace("youtube'da", "").replace("youtubeda", "").replace("youtube", "")
@@ -2809,7 +3120,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 10. EVRENSEL UYGULAMA AÇICI ("... aç", "... uygulamasını aç", "...'a gir")
+        // 11. EVRENSEL UYGULAMA AÇICI
         if (lower.contains("aç") || lower.endsWith("gir")) {
             if (lower.contains("kamera")) {
                 try {
@@ -2822,16 +3133,126 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             if (cleanedApp.isNotEmpty() && openAnyInstalledApp(cleanedApp)) return
         }
 
-        // 11. SÜPER AKILLI YAPAY ZEKA VE CANLI ARAŞTIRMA
+        // 12. AKILLI NİYET ANALİZİ: Gereksiz web araması yapmadan doğrudan en güçlü modele sor
         val allowPhoto = didUserExplicitlyAskForPhoto(lower)
-        val isSimpleGreeting = listOf("merhaba", "selam", "nasılsın", "naber", "günaydın", "iyi akşamlar", "iyi geceler", "adın ne", "kimsin", "saat kaç").any { lower == it || lower.startsWith("$it ") }
+        val needsWebSearch = lower.contains("kaç") || lower.contains("kimdir") || lower.contains("nedir") ||
+                lower.contains("nerede") || lower.contains("ne zaman") || lower.contains("haber") ||
+                lower.contains("hava durumu") || lower.contains("dolar") || lower.contains("altın") ||
+                lower.contains("maç") || lower.contains("araştır")
 
-        if (isSimpleGreeting) {
-            askMultiEngineAI(command, "", allowPhoto)
-        } else {
-            fetchLiveWebContext(command) { webContext ->
-                askMultiEngineAI(command, webContext, allowPhoto)
+        if (needsWebSearch) {
+            fetchLiveWebContext(trimmedCmd) { webContext ->
+                askMultiEngineAI(trimmedCmd, webContext, allowPhoto)
             }
+        } else {
+            askMultiEngineAI(trimmedCmd, "", allowPhoto)
+        }
+    }
+
+    // "Google Haritaları açıp Gaziantep'e yol tarifi al" cümlesinden saf hedefi ("Gaziantep") ayıklar ve gerçek navigasyonu başlatır!
+    private fun extractDestinationFromMapCommand(lower: String): String {
+        var s = lower
+            .replace("google haritaları açıp", "")
+            .replace("google haritalar'ı açıp", "")
+            .replace("google haritalari acip", "")
+            .replace("haritaları açıp", "")
+            .replace("haritalari acip", "")
+            .replace("haritayı açıp", "")
+            .replace("google haritalarda", "")
+            .replace("google haritalar", "")
+            .replace("haritalarda", "")
+            .replace("haritada", "")
+            .replace("haritalar", "")
+            .replace("yol tarifi al", "")
+            .replace("yol tarifi aç", "")
+            .replace("yol tarifi ver", "")
+            .replace("yol tarifi", "")
+            .replace("navigasyonu başlat", "")
+            .replace("navigasyon aç", "")
+            .replace("rota oluştur", "")
+            .replace("rotası oluştur", "")
+            .replace("bana", "")
+            .replace("lütfen", "")
+            .replace("aç", "")
+            .trim()
+
+        // Türkçe yönelme eklerini temizle: "gaziantep'e" -> "gaziantep", "ankara'ya" -> "ankara", "istanbula" -> "istanbul"
+        s = s.replace(Regex("'(?:e|a|ye|ya)$"), "")
+        val words = s.split(" ").filter { it.isNotBlank() }.toMutableList()
+        if (words.isNotEmpty()) {
+            val last = words.last()
+            val cleanedLast = when {
+                last.endsWith("ye") || last.endsWith("ya") -> last.dropLast(2)
+                last.endsWith("e") || last.endsWith("a") -> last.dropLast(1)
+                else -> last
+            }
+            if (cleanedLast.length >= 3) {
+                words[words.lastIndex] = cleanedLast
+            }
+        }
+        return words.joinToString(" ").trim().ifEmpty { "Gaziantep" }
+    }
+
+    private fun startGoogleMapsNavigation(destination: String) {
+        try {
+            val encodedDest = URLEncoder.encode(destination, "UTF-8")
+            // Doğrudan adım adım Google Maps Navigasyonunu başlatır!
+            val navUri = Uri.parse("google.navigation:q=$encodedDest")
+            val navIntent = Intent(Intent.ACTION_VIEW, navUri).apply {
+                setPackage("com.google.android.apps.maps")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (navIntent.resolveActivity(packageManager) != null) {
+                startActivity(navIntent)
+            } else {
+                val webMaps = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$encodedDest")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(webMaps)
+            }
+            replyAndShow("$destination için Google Haritalar yol tarifi ve navigasyon başlatılıyor.", null)
+        } catch (e: Exception) {
+            replyAndShow("Harita navigasyonu başlatılamadı.", null)
+        }
+    }
+
+    // YÜKSEK KALİTELİ GERÇEKÇİ RESİM ÜRETİCİ (Flux Model + Otomatik İngilizce Çeviri + Sohbet İçi Tam Ekran Gösterim)
+    private fun generateHighQualityFluxImage(turkishPrompt: String) {
+        // Önce Türkçe isteği zengin bir İngilizce Flux promptuna çevir ki saçma resimler üretmesin!
+        val translatePrompt = "Translate this image description into a detailed, photorealistic English prompt for Flux image generator (only output the English prompt, nothing else): $turkishPrompt"
+        val url = "https://text.pollinations.ai/${URLEncoder.encode(translatePrompt, "UTF-8")}?model=openai"
+
+        client.newCall(Request.Builder().url(url).get().build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                deliverFluxImage(turkishPrompt, "$turkishPrompt, masterpiece, photorealistic, 8k, highly detailed")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val eng = response.body?.string()?.trim()?.takeIf { it.isNotEmpty() && !it.contains("limit", true) }
+                    ?: "$turkishPrompt, photorealistic, 8k resolution, cinematic lighting"
+                deliverFluxImage(turkishPrompt, eng)
+            }
+        })
+    }
+
+    private fun deliverFluxImage(originalTrTitle: String, englishFluxPrompt: String) {
+        val encoded = URLEncoder.encode("$englishFluxPrompt, ultra detailed, high quality, 8k", "UTF-8")
+        val fluxUrl = "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=512&nologo=true&enhance=true&seed=${System.currentTimeMillis() % 100000}"
+
+        val answerText = "🎨 \"$originalTrTitle\" görseli yüksek kalitede hazırlandı."
+        // Hem sohbet geçmişine resimli olarak kaydet hem de sağ alt kartta göster!
+        AppConfig.addMessageToCurrentSession(this, "assistant", answerText, imageUrl = fluxUrl)
+        MainActivity.onNewMessageCallback?.invoke()
+
+        mainHandler.post {
+            if (!MainActivity.isChatScreenOpen) {
+                rootOverlayLayout.visibility = View.VISIBLE
+                downloadAndDisplayBitmap(fluxUrl, originalTrTitle) {}
+            } else {
+                rootOverlayLayout.visibility = View.GONE
+            }
+            pillPromptTv.text = answerText
+            MainActivity.centerSubTv?.text = answerText
+            speakHighRatedVoice(answerText)
         }
     }
 
@@ -2848,7 +3269,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // Türkçe ekleri ("google'ı", "instagram'a", "brawl stars'ı", "eba'yı") soyup saf uygulama adını çıkaran fonksiyon
     private fun extractCleanAppName(lower: String): String {
         var s = lower
             .replace("uygulamasını aç", "")
@@ -2863,7 +3283,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             .replace("gir", "")
             .trim()
 
-        val suffixes = listOf("'ı", "'i", "'u", "'ü", "'a", "'e", "'ya", "'ye", "yı", "yi", "yu", "yü", "या", "ye")
+        val suffixes = listOf("'ı", "'i", "'u", "'ü", "'a", "'e", "'ya", "'ye", "yı", "yi", "yu", "yü")
         for (suf in suffixes) {
             if (s.endsWith(suf) && s.length > suf.length + 2) {
                 s = s.dropLast(suf.length).trim()
@@ -2871,16 +3291,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
         if (s.length > 4 && (s.endsWith("ı") || s.endsWith("i") || s.endsWith("u") || s.endsWith("ü"))) {
-            // Örn: "instagramı" -> "instagram", "whatsappı" -> "whatsapp"
             val withoutLast = s.dropLast(1)
-            if (!listOf("galeri", "비디오").contains(s)) {
+            if (s != "galeri") {
                 s = withoutLast
             }
         }
         return s.trim()
     }
 
-    // EVRENSEL UYGULAMA BAŞLATICI: Cihazdaki tüm başlatılabilir (`MAIN/LAUNCHER`) aktiviteleri tarar ve okunuş benzerliğiyle açar!
     private fun openAnyInstalledApp(targetName: String, customReply: String? = null): Boolean {
         val normTarget = normalizeTr(targetName).trim()
         if (normTarget.isEmpty()) return false
@@ -2891,7 +3309,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return true
         }
 
-        // Google / Tarayıcı özel durumu
         if (normTarget == "google" || normTarget == "chrome" || normTarget == "internet" || normTarget == "tarayici") {
             val gLaunch = packageManager.getLaunchIntentForPackage("com.google.android.googlequicksearchbox")
                 ?: packageManager.getLaunchIntentForPackage("com.android.chrome")
@@ -2902,7 +3319,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             return true
         }
 
-        // Sık kullanılan uygulamalar ve Türkçe okunuş takma adları
         val aliasPackages = mapOf(
             "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
             "vatsap" to listOf("com.whatsapp"),
@@ -2912,23 +3328,21 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             "insta" to listOf("com.instagram.android"),
             "eba" to listOf("tr.gov.eba.hesap", "air.tr.gov.eba.ekitap", "tr.gov.eba.ders"),
             "brawl stars" to listOf("com.supercell.brawlstars"),
-            "bravl stars" to listOf("com.supercell.brawlstars"),
             "clash royale" to listOf("com.supercell.clashroyale"),
             "satranc" to listOf("com.chess"),
             "chess" to listOf("com.chess"),
             "minecraft" to listOf("com.mojang.minecraftpe"),
-            "maynkraft" to listOf("com.mojang.minecraftpe"),
             "spotify" to listOf("com.spotify.music"),
             "tiktok" to listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"),
             "telegram" to listOf("org.telegram.messenger"),
             "harita" to listOf("com.google.android.apps.maps"),
+            "haritalar" to listOf("com.google.android.apps.maps"),
+            "google haritalar" to listOf("com.google.android.apps.maps"),
             "maps" to listOf("com.google.android.apps.maps"),
             "galeri" to listOf("com.sec.android.gallery3d", "com.google.android.apps.photos", "com.miui.gallery"),
-            "fotograflar" to listOf("com.sec.android.gallery3d", "com.google.android.apps.photos"),
             "saat" to listOf("com.sec.android.app.clockpackage", "com.google.android.deskclock"),
             "hesap makinesi" to listOf("com.sec.android.app.popupcalculator", "com.google.android.calculator"),
             "notlar" to listOf("com.samsung.android.app.notes", "com.google.android.keep"),
-            "samsung notes" to listOf("com.samsung.android.app.notes"),
             "play store" to listOf("com.android.vending"),
             "dosyalar" to listOf("com.sec.android.app.myfiles", "com.google.android.apps.nbu.files"),
             "takvim" to listOf("com.samsung.android.calendar", "com.google.android.calendar")
@@ -2948,7 +3362,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // Cihazdaki TÜM başlatılabilir (Launcher) uygulamaları tara ve en yüksek eşleşeni aç!
         val pm = packageManager
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -3003,7 +3416,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // Eğer EBA gibi bir uygulama cihazda yüklü değilse doğrudan web sitesini aç!
         if (normTarget == "eba") {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.eba.gov.tr")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             replyAndShow("EBA açılıyor.", null)
@@ -3086,18 +3498,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-        }
-    }
-
-    private fun generateOrFetchImageInRightBottom(prompt: String) {
-        replyAndShow("\"$prompt\" görseli hazırlanıyor.", null)
-        val encoded = URLEncoder.encode(prompt, "UTF-8")
-        val aiImageUrl = "https://image.pollinations.ai/prompt/$encoded?width=540&height=340&nologo=true&seed=${System.currentTimeMillis() % 10000}"
-
-        downloadAndDisplayBitmap(aiImageUrl, prompt) { success ->
-            if (!success) {
-                loadTopicPhotoIntoRightBottomCard(prompt)
-            }
         }
     }
 
@@ -3230,15 +3630,25 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun replyAndShow(answer: String, imageKeyword: String?) {
-        AppConfig.addMessageToCurrentSession(this, "assistant", answer)
+        val resolvedImgUrl = if (!imageKeyword.isNullOrBlank()) {
+            "https://image.pollinations.ai/prompt/${URLEncoder.encode("$imageKeyword, photorealistic, 8k", "UTF-8")}?model=flux&width=768&height=512&nologo=true"
+        } else null
+
+        AppConfig.addMessageToCurrentSession(this, "assistant", answer, imageUrl = resolvedImgUrl)
         MainActivity.onNewMessageCallback?.invoke()
 
         mainHandler.post {
-            rootOverlayLayout.visibility = View.VISIBLE
+            applyBixbyDynamicColor()
+            // SOHBET EKRANI AÇIKSA SAĞ ALTTAN BAR ÇIKARMA!
+            if (!MainActivity.isChatScreenOpen) {
+                rootOverlayLayout.visibility = View.VISIBLE
+            } else {
+                rootOverlayLayout.visibility = View.GONE
+            }
             pillPromptTv.text = answer
             pillPromptTv.scrollTo(0, 0)
             MainActivity.centerSubTv?.text = answer
-            if (!imageKeyword.isNullOrBlank()) {
+            if (!imageKeyword.isNullOrBlank() && !MainActivity.isChatScreenOpen) {
                 loadTopicPhotoIntoRightBottomCard(imageKeyword)
             } else {
                 imageCardView.visibility = View.GONE
@@ -3250,9 +3660,9 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     private fun loadTopicPhotoIntoRightBottomCard(keyword: String) {
         val cleanKw = keyword.trim()
         val langPrefix = AppConfig.getLang(this).take(2).lowercase(Locale.US)
-        val wikiUrl = "https://$langPrefix.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=thumbnail&pithumbsize=500&generator=search&gsrsearch=${URLEncoder.encode(cleanKw, "UTF-8")}&gsrlimit=1"
+        val wikiUrl = "https://$langPrefix.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=thumbnail&pithumbsize=600&generator=search&gsrsearch=${URLEncoder.encode(cleanKw, "UTF-8")}&gsrlimit=1"
 
-        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/16.0").build()
+        val req = Request.Builder().url(wikiUrl).header("User-Agent", "GeminiMaster/17.0").build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {}
             override fun onResponse(call: Call, response: Response) {
@@ -3269,7 +3679,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                             thumbUrl = pageObj.optJSONObject("thumbnail")?.optString("source")
                         }
                     }
-                    val finalUrl = thumbUrl ?: "https://tse2.mm.bing.net/th?q=${URLEncoder.encode(cleanKw, "UTF-8")}&w=480&h=300&c=7&rs=1"
+                    val finalUrl = thumbUrl ?: "https://image.pollinations.ai/prompt/${URLEncoder.encode("$cleanKw, photorealistic", "UTF-8")}?model=flux&width=560&height=340&nologo=true"
                     downloadAndDisplayBitmap(finalUrl, pageTitle) {}
                 } catch (e: Exception) {}
             }
@@ -3292,10 +3702,20 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                     return
                 }
                 mainHandler.post {
-                    rootOverlayLayout.visibility = View.VISIBLE
-                    resultImageView.setImageBitmap(bmp)
-                    imageCaptionTv.text = "📸 $caption"
-                    imageCardView.visibility = View.VISIBLE
+                    if (!MainActivity.isChatScreenOpen) {
+                        rootOverlayLayout.visibility = View.VISIBLE
+                        resultImageView.setImageBitmap(bmp)
+                        imageCaptionTv.text = "📸 $caption (Büyütmek için dokunun)"
+                        imageCardView.visibility = View.VISIBLE
+                        imageCardView.setOnClickListener {
+                            // Sağ alttaki resme dokununca Sohbet ekranını açıp resmi tam boy gösterir!
+                            imageCardView.visibility = View.GONE
+                            val i = Intent(this@OverlayService, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(i)
+                        }
+                    }
                 }
                 onDone(true)
             }
@@ -3338,7 +3758,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun fetchWikipediaSnippet(cleanQ: String, callback: (String) -> Unit) {
         val wikiUrl = "https://tr.wikipedia.org/w/api.php?action=query&list=search&srsearch=${URLEncoder.encode(cleanQ, "UTF-8")}&utf8=&format=json&srlimit=2"
-        client.newCall(Request.Builder().url(wikiUrl).header("User-Agent", "MasterAI/16.0").build()).enqueue(object : Callback {
+        client.newCall(Request.Builder().url(wikiUrl).header("User-Agent", "MasterAI/17.0").build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { callback("") }
             override fun onResponse(call: Call, response: Response) {
                 val body = response.body?.string() ?: ""
@@ -3360,7 +3780,6 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         })
     }
 
-    // SÜPER AKILLI YAPAY ZEKA MOTORU (12 Mesaj Hafıza + Tam Eylem Yeteneği + Derin Muhakeme)
     private fun askMultiEngineAI(prompt: String, liveWebInfo: String, allowPhoto: Boolean) {
         val rawKey = AppConfig.getKey(this).trim()
         val aiName = AppConfig.getName(this).ifEmpty { "Asistan" }
@@ -3378,18 +3797,19 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
         }
 
         val photoRule = if (allowPhoto) {
-            "- Kullanıcı görsel/fotoğraf istediği için cevabın sonuna [RESIM: KonuBaşlığı] ekle."
+            "- Kullanıcı görsel/fotoğraf istediği için cevabın sonuna [RESIM: İngilizceDetaylıGörselTanımı] ekle."
         } else {
             "- KESİNLİKLE [RESIM: ...] etiketi EKLEME! Sadece konuşarak cevap ver."
         }
 
         val systemRules = """
             Senin adın $aiName ($selectedMode motoru). Kullanıcının adı $userName.
-            Üstün zekalı, analitik düşünen, esprili, samimi ve her konuya hakim kişisel yapay zeka asistanısın.
-            Doğal, akıcı ve net Türkçe cevap ver (konunun derinliğine göre 1-4 cümle).
+            Üstün zekalı, mantıklı, esprili ve her konuya hakim kişisel yapay zeka asistanısın.
+            Doğal, akıcı ve zeki Türkçe cevap ver (1-3 cümle).
             ${if (liveWebInfo.isNotEmpty()) "Güncel Canlı İnternet Verisi: $liveWebInfo" else ""}
             
-            OTONOM EYLEM ETİKETLERİ (Eğer kullanıcı bir uygulama işlemi isterse cevabın en sonuna ekle):
+            OTONOM EYLEM ETİKETLERİ (Eğer kullanıcı bir uygulama/cihaz işlemi isterse cevabın en sonuna ekle):
+            - Haritada bir yere yol tarifi / navigasyon başlatmak için: [HARITA_ROTA: HedefKonum]
             - Google'da bir şey yazıp aratmak için: [GOOGLE_YAZ: AranacakMetin]
             - YouTube'da doğrudan video oynatmak için: [VIDEO: AramaTerimi]
             - WhatsApp mesajı atmak için: [WHATSAPP: KişiAdı | MesajMetni]
@@ -3461,12 +3881,16 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun tryCloudAIEnginePost(systemRules: String, userPrompt: String, allowPhoto: Boolean, callback: (Boolean) -> Unit) {
+        val modelName = when (AppConfig.getModelChoice(this)) {
+            "ARGON" -> "deepseek-reasoner"
+            else -> "openai-large"
+        }
         val messagesArr = JSONArray().apply {
             put(JSONObject().apply { put("role", "system"); put("content", systemRules) })
             put(JSONObject().apply { put("role", "user"); put("content", userPrompt) })
         }
         val payload = JSONObject().apply {
-            put("model", "openai-large")
+            put("model", modelName)
             put("messages", messagesArr)
             put("seed", (System.currentTimeMillis() % 100000).toInt())
         }
@@ -3489,7 +3913,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
                         } else {
                             body
                         }
-                        val clean = content.replace("*", "").trim()
+                        val clean = content.replace(Regex("<think>[\\s\\S]*?</think>"), "").replace("*", "").trim()
                         if (clean.isNotEmpty() && !clean.contains("Free limit", true) && !clean.contains("rate limit", true)) {
                             executeActionTagsAndReply(clean, allowPhoto)
                             callback(true)
@@ -3504,7 +3928,7 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun tryCloudAIEngineGet(systemRules: String, userPrompt: String, liveWebInfo: String, allowPhoto: Boolean) {
         val shortPrompt = "$systemRules\nCevap:"
-        val url = "https://text.pollinations.ai/${URLEncoder.encode(shortPrompt.take(900), "UTF-8")}?model=mistral&seed=${System.currentTimeMillis() % 9999}"
+        val url = "https://text.pollinations.ai/${URLEncoder.encode(shortPrompt.take(900), "UTF-8")}?model=openai&seed=${System.currentTimeMillis() % 9999}"
 
         client.newCall(Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").get().build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -3545,6 +3969,14 @@ class OverlayService : Service(), TextToSpeech.OnInitListener {
 
     private fun executeActionTagsAndReply(rawAnswer: String, allowPhoto: Boolean) {
         var cleanSpeech = rawAnswer
+
+        val mapRouteRegex = Regex("\\[HARITA_ROTA:\\s*(.*?)\\]")
+        val mapMatch = mapRouteRegex.find(rawAnswer)
+        if (mapMatch != null) {
+            val dest = mapMatch.groupValues[1].trim()
+            startGoogleMapsNavigation(dest)
+            return
+        }
 
         val gSearchRegex = Regex("\\[GOOGLE_YAZ:\\s*(.*?)\\]")
         val gMatch = gSearchRegex.find(rawAnswer)
